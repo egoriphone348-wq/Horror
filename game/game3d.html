@@ -503,8 +503,8 @@ function moveRight(dist){
   camera.position.addScaledVector(right, dist);
 }
 
-// Глобальное освещение (очень тёмное)
-const ambient = new THREE.AmbientLight(0x1a2211, 0.55);
+// Глобальное освещение (почти полная тьма — свет только от ламп)
+const ambient = new THREE.AmbientLight(0x080d06, 0.10);
 scene.add(ambient);
 
 // Фонарик — SpotLight прикреплён к камере
@@ -516,8 +516,8 @@ camera.add(torchTarget);
 torch.target = torchTarget;
 scene.add(camera);
 
-// Свет комнаты (меняется при переходе)
-const roomPL = new THREE.PointLight(0x223311, 0.35, 22);
+// Свет комнаты (меняется при переходе, очень слабый fill)
+const roomPL = new THREE.PointLight(0x223311, 0.08, 18);
 scene.add(roomPL);
 
 // Точечные лампы в освещённых комнатах
@@ -573,6 +573,35 @@ function makeTex(hexBase, varAmount) {
     const grd=ctx.createRadialGradient(px,py,2,px,py,ps);
     grd.addColorStop(0,`rgba(0,0,0,.35)`); grd.addColorStop(1,`rgba(0,0,0,0)`);
     ctx.fillStyle=grd; ctx.fillRect(px-ps,py-ps,ps*2,ps*2);
+  }
+  // Кровавые пятна и подтёки
+  if(Math.random()<0.72){
+    const numStains=Math.floor(Math.random()*3)+1;
+    for(let b=0;b<numStains;b++){
+      const bx=Math.random()*460+26, by=100+Math.random()*280;
+      const bw=25+Math.random()*65, bh=12+Math.random()*30;
+      const bgrd=ctx.createRadialGradient(bx,by,2,bx,by,bw*0.55);
+      bgrd.addColorStop(0,`rgba(58,0,0,.80)`);
+      bgrd.addColorStop(0.5,`rgba(42,0,0,.45)`);
+      bgrd.addColorStop(1,`rgba(0,0,0,0)`);
+      ctx.fillStyle=bgrd;
+      ctx.beginPath();
+      ctx.ellipse(bx,by,bw*0.5,bh*0.5,Math.random()*Math.PI,0,Math.PI*2);
+      ctx.fill();
+      // Подтёки вниз
+      const nd=Math.floor(Math.random()*5)+1;
+      for(let d=0;d<nd;d++){
+        const dx=bx+(Math.random()-.5)*bw*.9;
+        const dlen=18+Math.random()*90;
+        const dw=1+Math.random()*3;
+        ctx.fillStyle=`rgba(48,0,0,${.30+Math.random()*.32})`;
+        ctx.fillRect(dx,by+bh*.5,dw,dlen);
+        ctx.beginPath();
+        ctx.arc(dx+dw*.5, by+bh*.5+dlen, dw*.9, 0, Math.PI*2);
+        ctx.fillStyle=`rgba(42,0,0,.52)`;
+        ctx.fill();
+      }
+    }
   }
   const t=new THREE.CanvasTexture(cv);
   t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(2,2);
@@ -644,21 +673,27 @@ function wallMat(hex){ return new THREE.MeshLambertMaterial({map:makeTex(hex,55)
 function floorMat(hex){ return new THREE.MeshLambertMaterial({map:makeFloorTex(hex)}); }
 function flatMat(hex){ return new THREE.MeshLambertMaterial({color:hex}); }
 
-// Больничная потолочная панель (флуоресцентный светильник)
+// Квадратная потолочная панель (как в советских больницах)
 function addCeilingPanel(cx, cz, color, intensity){
-  // Корпус светильника
-  const housing=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.07,0.55),flatMat(0x3a3a3a));
-  housing.position.set(cx, RH-0.04, cz); scene.add(housing);
-  // Светящаяся панель
+  // Рама (квадратная утопленная панель)
+  const housing=new THREE.Mesh(new THREE.BoxGeometry(1.35,0.07,1.35),flatMat(0x252525));
+  housing.position.set(cx, RH-0.035, cz); scene.add(housing);
+  // Рассеиватель (матовое стекло, слегка желтоватый флуоресцентный свет)
   const face=new THREE.Mesh(
-    new THREE.PlaneGeometry(1.0,0.48),
-    new THREE.MeshLambertMaterial({color:0xddfff0,emissive:0xddfff0,emissiveIntensity:2.2})
+    new THREE.PlaneGeometry(1.2,1.2),
+    new THREE.MeshLambertMaterial({color:0xe8fff2,emissive:0xd0ffe8,emissiveIntensity:1.5})
   );
-  face.rotation.x=Math.PI/2; face.position.set(cx, RH-0.075, cz);
+  face.rotation.x=Math.PI/2; face.position.set(cx, RH-0.072, cz);
   scene.add(face);
-  // Рассеянный свет вниз
-  const pl=new THREE.PointLight(color, intensity, 14);
-  pl.position.set(cx, RH-0.25, cz);
+  // Две трубки-лампы внутри (имитация флуоресцентных трубок)
+  for(const oz of [-0.28, 0.28]){
+    const tube=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.025,1.05),
+      new THREE.MeshLambertMaterial({color:0xffffff,emissive:0xeeffee,emissiveIntensity:3.0}));
+    tube.position.set(cx, RH-0.048, cz+oz); scene.add(tube);
+  }
+  // Рассеянный тусклый свет вниз (холодный зеленоватый)
+  const pl=new THREE.PointLight(color, intensity, 12);
+  pl.position.set(cx, RH-0.32, cz);
   pl.userData={base:intensity, phase:Math.random()*Math.PI*2};
   scene.add(pl); staticLights.push(pl);
 }
