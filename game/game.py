@@ -1106,6 +1106,36 @@ def run_puzzle(state):
                 print(C.GRAY + "  Сейф заблокирован. Попробуй найти другие подсказки." + C.RESET)
                 return
 
+# ─── ПРОВЕРКА КОДА СЕЙФА (ДЛЯ ВЕБ-РЕЖИМА) ────────────────────
+
+def handle_puzzle_attempt(state, code):
+    """Проверяет один код для сейфа морга (без интерактивного ввода)."""
+    if state.puzzle_solved:
+        print(C.GRAY + "  Сейф уже открыт. Ключ выхода у тебя." + C.RESET)
+        return True
+    if code == "3721":
+        print()
+        slow_print("  Сейф открывается с глухим щелчком.", color=C.L_GREEN)
+        narrative(
+            "Внутри — потрёпанная папка с документами и тяжёлый ключ. "
+            "На папке написано: «ЭКСПЕРИМЕНТ «ТЕНЬ». СТРОГО СЕКРЕТНО». "
+            "Ты берёшь ключ. Лучше бы не смотрел в папку. Лучше бы никогда не знал."
+        )
+        state.add_item("ключ выхода")
+        state.items_found.append("ключ выхода")
+        state.puzzle_solved = True
+        state.quests["quest_3"] = True
+        state.quests["quest_4"] = True
+        state.drain_sanity(8)
+        print()
+        print(C.L_GREEN + C.BOLD + "  ✓ КВЕСТ ВЫПОЛНЕН: Головоломка морга" + C.RESET)
+        print(C.L_GREEN + C.BOLD + "  ✓ КВЕСТ ВЫПОЛНЕН: Найти ключ выхода" + C.RESET)
+        return True
+    else:
+        state.drain_sanity(5)
+        print(C.RED + "  Неверный код. Сейф не поддаётся." + C.RESET)
+        return False
+
 # ─── КВЕСТ-ЧЕКИ ───────────────────────────────────────────────
 
 def check_quests(state):
