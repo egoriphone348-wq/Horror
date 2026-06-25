@@ -504,7 +504,7 @@ function moveRight(dist){
 }
 
 // Глобальное освещение (очень тёмное)
-const ambient = new THREE.AmbientLight(0x111111, 0.25);
+const ambient = new THREE.AmbientLight(0x1a2211, 0.55);
 scene.add(ambient);
 
 // Фонарик — SpotLight прикреплён к камере
@@ -527,30 +527,87 @@ const staticLights = [];
 //  ПРОЦЕДУРНЫЕ ТЕКСТУРЫ
 // ═══════════════════════════════════════════
 const texCache = {};
+// Стена: бетонные блоки + трещины + пятна
 function makeTex(hexBase, varAmount) {
   const key = hexBase + '_' + varAmount;
   if (texCache[key]) return texCache[key];
   const cv = document.createElement('canvas');
-  cv.width = cv.height = 256;
+  cv.width = cv.height = 512;
   const ctx = cv.getContext('2d');
   const r=(hexBase>>16)&0xff, g=(hexBase>>8)&0xff, b=hexBase&0xff;
   ctx.fillStyle=`rgb(${r},${g},${b})`;
-  ctx.fillRect(0,0,256,256);
-  for(let i=0;i<15000;i++){
-    const x=Math.random()*256,y=Math.random()*256;
+  ctx.fillRect(0,0,512,512);
+  // Зернистость бетона
+  for(let i=0;i<28000;i++){
+    const x=Math.random()*512,y=Math.random()*512;
     const v=(Math.random()-.5)*varAmount;
-    const lv=Math.min(255,Math.max(0,r+v));
-    ctx.fillStyle=`rgba(${lv},${Math.min(255,Math.max(0,g+v))},${Math.min(255,Math.max(0,b+v))},.35)`;
-    ctx.fillRect(x,y,2,2);
+    ctx.fillStyle=`rgba(${Math.min(255,Math.max(0,r+v))},${Math.min(255,Math.max(0,g+v))},${Math.min(255,Math.max(0,b+v))},.3)`;
+    ctx.fillRect(x,y,2+Math.random()*2,1+Math.random());
   }
-  ctx.strokeStyle='rgba(0,0,0,.12)'; ctx.lineWidth=.6;
-  for(let i=0;i<6;i++){
-    ctx.beginPath(); ctx.moveTo(Math.random()*256,Math.random()*256);
-    for(let j=0;j<4;j++) ctx.lineTo(Math.random()*256,Math.random()*256);
+  // Горизонтальные швы блоков (каждые ~85px)
+  ctx.strokeStyle=`rgba(0,0,0,.38)`; ctx.lineWidth=2;
+  for(let y=85;y<512;y+=85){
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(512,y); ctx.stroke();
+  }
+  // Вертикальные швы (со смещением шахматкой)
+  ctx.lineWidth=1.5;
+  for(let row=0;row<6;row++){
+    const off=(row%2)*64;
+    for(let x=off;x<512;x+=128){
+      ctx.strokeStyle=`rgba(0,0,0,.28)`;
+      ctx.beginPath(); ctx.moveTo(x,row*85); ctx.lineTo(x,(row+1)*85); ctx.stroke();
+    }
+  }
+  // Трещины
+  ctx.strokeStyle=`rgba(0,0,0,.55)`; ctx.lineWidth=1;
+  for(let c=0;c<4;c++){
+    ctx.beginPath();
+    let cx2=Math.random()*512,cy2=Math.random()*512;
+    ctx.moveTo(cx2,cy2);
+    for(let s=0;s<8;s++){cx2+=(Math.random()-.45)*30;cy2+=(Math.random()-.45)*40;ctx.lineTo(cx2,cy2);}
     ctx.stroke();
   }
+  // Тёмные пятна (влага/ржавчина)
+  for(let p=0;p<3;p++){
+    const px=Math.random()*512,py=Math.random()*512,ps=20+Math.random()*60;
+    const grd=ctx.createRadialGradient(px,py,2,px,py,ps);
+    grd.addColorStop(0,`rgba(0,0,0,.35)`); grd.addColorStop(1,`rgba(0,0,0,0)`);
+    ctx.fillStyle=grd; ctx.fillRect(px-ps,py-ps,ps*2,ps*2);
+  }
   const t=new THREE.CanvasTexture(cv);
-  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(2,1);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(2,2);
+  texCache[key]=t; return t;
+}
+
+// Плиточный пол (кафель)
+function makeFloorTex(hexBase) {
+  const key = 'floor_'+hexBase;
+  if(texCache[key]) return texCache[key];
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 512;
+  const ctx = cv.getContext('2d');
+  const r=(hexBase>>16)&0xff, g=(hexBase>>8)&0xff, b=hexBase&0xff;
+  // Плитка 64x64
+  for(let ty=0;ty<8;ty++) for(let tx=0;tx<8;tx++){
+    const v=(Math.random()-.5)*18;
+    ctx.fillStyle=`rgb(${Math.min(255,Math.max(0,r+v))},${Math.min(255,Math.max(0,g+v))},${Math.min(255,Math.max(0,b+v))})`;
+    ctx.fillRect(tx*64+1,ty*64+1,62,62);
+    // Грязь / потёртость
+    for(let i=0;i<400;i++){
+      const nx=tx*64+1+Math.random()*62, ny=ty*64+1+Math.random()*62;
+      const nv=(Math.random()-.5)*30;
+      ctx.fillStyle=`rgba(${Math.min(255,Math.max(0,r+nv))},0,0,.12)`;
+      ctx.fillRect(nx,ny,2,2);
+    }
+  }
+  // Швы (чёрный грут)
+  ctx.fillStyle='rgba(0,0,0,.55)';
+  for(let i=0;i<=8;i++){ctx.fillRect(i*64,0,2,512);ctx.fillRect(0,i*64,512,2);}
+  // Трещина в одной плитке
+  ctx.strokeStyle='rgba(0,0,0,.7)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(130,195); ctx.lineTo(160,230); ctx.lineTo(155,265); ctx.stroke();
+  const t=new THREE.CanvasTexture(cv);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(1.5,1.5);
   texCache[key]=t; return t;
 }
 
@@ -584,7 +641,27 @@ function box(x,y,z,w,h,d,mat){
 }
 
 function wallMat(hex){ return new THREE.MeshLambertMaterial({map:makeTex(hex,55)}); }
+function floorMat(hex){ return new THREE.MeshLambertMaterial({map:makeFloorTex(hex)}); }
 function flatMat(hex){ return new THREE.MeshLambertMaterial({color:hex}); }
+
+// Больничная потолочная панель (флуоресцентный светильник)
+function addCeilingPanel(cx, cz, color, intensity){
+  // Корпус светильника
+  const housing=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.07,0.55),flatMat(0x3a3a3a));
+  housing.position.set(cx, RH-0.04, cz); scene.add(housing);
+  // Светящаяся панель
+  const face=new THREE.Mesh(
+    new THREE.PlaneGeometry(1.0,0.48),
+    new THREE.MeshLambertMaterial({color:0xddfff0,emissive:0xddfff0,emissiveIntensity:2.2})
+  );
+  face.rotation.x=Math.PI/2; face.position.set(cx, RH-0.075, cz);
+  scene.add(face);
+  // Рассеянный свет вниз
+  const pl=new THREE.PointLight(color, intensity, 14);
+  pl.position.set(cx, RH-0.25, cz);
+  pl.userData={base:intensity, phase:Math.random()*Math.PI*2};
+  scene.add(pl); staticLights.push(pl);
+}
 
 function buildWall(wx,wz,alongX,roomW,hasExit,mat){
   const pw=(roomW-DW)/2;
