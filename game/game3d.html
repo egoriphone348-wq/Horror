@@ -209,7 +209,6 @@ canvas{display:block}
 
 <script type="module">
 import * as THREE from 'three';
-import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
 // ═══════════════════════════════════════════
 //  КОНСТАНТЫ
@@ -385,7 +384,46 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x000000, 0.055);
 
 const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 80);
-const controls = new PointerLockControls(camera, renderer.domElement);
+// ─── Кастомное управление мышью (без PointerLockControls) ───────────────
+let gameActive = false;   // игра запущена и принимает ввод
+let yaw = 0, pitch = 0;   // углы Эйлера для камеры
+const SENS = 0.0022;
+
+camera.rotation.order = 'YXZ';
+
+function lockPointer(){
+  const el = renderer.domElement;
+  (el.requestPointerLock || el.mozRequestPointerLock || (()=>{})).call(el);
+}
+function unlockPointer(){
+  (document.exitPointerLock || document.mozExitPointerLock || (()=>{})).call(document);
+}
+
+document.addEventListener('pointerlockchange', ()=>{});
+document.addEventListener('mozpointerlockchange', ()=>{});
+
+document.addEventListener('mousemove', e => {
+  if(!gameActive || paused || gs.won || gs.dead) return;
+  yaw   -= e.movementX * SENS;
+  pitch  = Math.max(-Math.PI/2.1, Math.min(Math.PI/2.1, pitch - e.movementY * SENS));
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+});
+
+// Клик по canvas активирует захват указателя (если iframe разрешает)
+renderer.domElement.addEventListener('click', ()=>{
+  if(gameActive && !gs.won && !gs.dead && !paused && !safeOpen) lockPointer();
+});
+
+// Вспомогательные функции движения (заменяют controls.moveForward/moveRight)
+function moveForward(dist){
+  const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).negate();
+  camera.position.addScaledVector(fwd, dist);
+}
+function moveRight(dist){
+  const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+  camera.position.addScaledVector(right, dist);
+}
 
 // Глобальное освещение (очень тёмное)
 const ambient = new THREE.AmbientLight(0x111111, 0.25);
@@ -619,17 +657,19 @@ camera.position.set(ROOMS['вход'].pos[0], EYE, ROOMS['вход'].pos[1]);
 
 const keys={};
 let safeOpen=false, paused=false;
+// paused объявлен до mousemove-слушателя выше, используется там же
 let lastDrain=0, msgTimer=null;
 
 document.addEventListener('keydown',e=>{keys[e.code]=true; onKey(e);});
 document.addEventListener('keyup',  e=>{keys[e.code]=false;});
 
 function onKey(e){
-  if(e.code==='KeyF' && controls.isLocked) toggleFlash();
-  if(e.code==='KeyE' && controls.isLocked) interact();
+  if(e.code==='KeyF' && gameActive) toggleFlash();
+  if(e.code==='KeyE' && gameActive) interact();
   if(e.code==='Escape'){
     if(safeOpen){ closeSafe(); return; }
-    if(controls.isLocked) controls.unlock(); else controls.lock();
+    if(gameActive && !paused){ paused=true; unlockPointer(); document.getElementById('pause-hint').style.display='flex'; }
+    else if(paused){ resumeGame(); }
   }
 }
 
@@ -637,15 +677,15 @@ const vel=new THREE.Vector3();
 const dir=new THREE.Vector3();
 
 function handleMovement(dt){
-  if(!controls.isLocked||gs.won||gs.dead) return;
+  if(!gameActive||paused||gs.won||gs.dead) return;
   vel.x-=vel.x*10*dt; vel.z-=vel.z*10*dt;
   dir.z=(keys['KeyW']||keys['ArrowUp']?-1:0)+(keys['KeyS']||keys['ArrowDown']?1:0);
   dir.x=(keys['KeyA']||keys['ArrowLeft']?-1:0)+(keys['KeyD']||keys['ArrowRight']?1:0);
   dir.normalize();
   if(dir.z) vel.z+=dir.z*SPEED*dt*10;
   if(dir.x) vel.x+=dir.x*SPEED*dt*10;
-  controls.moveRight(vel.x*dt);
-  controls.moveForward(-vel.z*dt);
+  moveRight(vel.x*dt);
+  moveForward(-vel.z*dt);
   camera.position.y=EYE;
   // Ограничение мира
   camera.position.x=Math.max(-8,Math.min(72,camera.position.x));
@@ -823,7 +863,7 @@ function toggleFlash(forceOn){
 //  СЕЙФ
 // ═══════════════════════════════════════════
 function openSafe(){
-  safeOpen=true; controls.unlock();
+  safeOpen=true; unlockPointer();
   document.getElementById('safe-modal').style.display='flex';
   document.getElementById('safe-input').value='';
   setTimeout(()=>document.getElementById('safe-input').focus(),100);
@@ -882,7 +922,8 @@ function updateEntity(dt){
     const tr=ROOMS[x]; if(!tr) return false;
     return Object.values(tr.exits||{}).includes(gs.room)||x===gs.room;
   });
-  gs.entityRoom=(toward.length&&Math.random()<.55 ? toward:adj)[Math.floor(Math.random()*Math.max(toward.length,adj.length))];
+  const chosenArr=(toward.length&&Math.random()<.55) ? toward : adj;
+  gs.entityRoom=chosenArr[Math.floor(Math.random()*chosenArr.length)];
   if(gs.entityRoom===gs.room){ encounter(); return; }
   const nowR=ROOMS[gs.entityRoom];
   if(nowR && Object.values(nowR.exits||{}).includes(gs.room))
@@ -967,7 +1008,7 @@ function applySanityFX(){
 //  ПОБЕДА / ПОРАЖЕНИЕ
 // ═══════════════════════════════════════════
 function win(){
-  gs.won=true; controls.unlock();
+  gs.won=true; gameActive=false; unlockPointer();
   let t,txt;
   if(gs.sanity>=60){
     t='🌅 ПОБЕГ'; txt='Ты вырвался из подвала. Свежий воздух ударяет в лёгкие. Ты жив. Ты в порядке. Почти. Ты никогда не забудешь этого места.';
@@ -984,7 +1025,7 @@ function win(){
   document.getElementById('endscreen').style.display='flex';
 }
 function die(){
-  gs.dead=true; controls.unlock();
+  gs.dead=true; gameActive=false; unlockPointer();
   document.getElementById('end-title').textContent='💀 БЕЗУМИЕ';
   document.getElementById('end-title').style.color='#cc0000';
   document.getElementById('end-text').textContent='Рассудок не выдержал. Тьма поглотила тебя. Ты больше не ты.';
@@ -1056,27 +1097,25 @@ function playScare(){
 // ═══════════════════════════════════════════
 //  КОНТРОЛЫ — СТАРТ / ПАУЗА
 // ═══════════════════════════════════════════
+function resumeGame(){
+  paused=false;
+  document.getElementById('pause-hint').style.display='none';
+  lockPointer();
+}
+
 document.getElementById('start-btn').addEventListener('click',()=>{
   initAudio();
   document.getElementById('overlay').style.display='none';
-  controls.lock();
   buildDungeon();
   updateHUD();
   updateRoomLight('вход');
+  gameActive=true;
+  paused=false;
+  lockPointer();
   setTimeout(()=>msg(ROOMS['вход'].desc,5500),600);
 });
 
-controls.addEventListener('lock',()=>{
-  paused=false;
-  document.getElementById('pause-hint').style.display='none';
-});
-controls.addEventListener('unlock',()=>{
-  if(!safeOpen&&!gs.won&&!gs.dead){
-    paused=true;
-    document.getElementById('pause-hint').style.display='flex';
-  }
-});
-document.getElementById('resume-btn').addEventListener('click',()=>controls.lock());
+document.getElementById('resume-btn').addEventListener('click', resumeGame);
 
 // ═══════════════════════════════════════════
 //  АНИМАЦИЯ
