@@ -508,7 +508,7 @@ const ambient = new THREE.AmbientLight(0x111111, 0.25);
 scene.add(ambient);
 
 // Фонарик — SpotLight прикреплён к камере
-const torch = new THREE.SpotLight(0xffeedd, 0, 35, Math.PI*0.11, 0.4, 1.8);
+const torch = new THREE.SpotLight(0xfff5dd, 0, 55, Math.PI*0.18, 0.35, 1.2);
 const torchTarget = new THREE.Object3D();
 torchTarget.position.set(0,0,-1);
 camera.add(torch);
@@ -936,7 +936,7 @@ function startGenerator(){
 // ═══════════════════════════════════════════
 function toggleFlash(forceOn){
   gs.flashOn = forceOn!==undefined ? forceOn : !gs.flashOn;
-  torch.intensity = gs.flashOn ? 3.2 : 0;
+  torch.intensity = gs.flashOn ? 7.5 : 0;
   document.getElementById('flashlight-icon').textContent = gs.flashOn ? '🔦 включён' : '🔦 выключен';
   document.getElementById('flashlight-icon').style.color = gs.flashOn ? '#ffdd88' : '#333';
   if(forceOn===undefined) msg(gs.flashOn ? '🔦 Фонарик включён.' : '🔦 Фонарик выключен.');
@@ -1429,7 +1429,7 @@ document.getElementById('start-btn').addEventListener('click',()=>{
   buildDungeon();
   gs.visited.add('вход');
   // Фонарик включён с самого начала
-  torch.intensity = gs.flashOn ? 3.2 : 0;
+  torch.intensity = gs.flashOn ? 7.5 : 0;
   document.getElementById('flashlight-icon').textContent = '🔦 включён';
   document.getElementById('flashlight-icon').style.color = '#ffdd88';
   updateHUD();
