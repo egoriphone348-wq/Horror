@@ -123,16 +123,61 @@ canvas{display:block}
 }
 #end-btn:hover{border-color:#888;color:#ccc}
 
-/* ─── МИНИ-КАРТА ─── */
+/* ─── МИНИ-КАРТА + ЗАДАЧИ ─── */
 #minimap-wrap{
-  position:fixed;bottom:18px;right:20px;z-index:50;
-  display:none;flex-direction:column;align-items:flex-end;gap:3px;
+  position:fixed;top:16px;left:16px;z-index:50;
+  display:none;flex-direction:column;align-items:flex-start;gap:4px;
 }
-#minimap-label{font-size:.6em;color:#333;letter-spacing:2px;text-align:right}
-#minimap{
-  border:1px solid #252525;border-radius:3px;
-  image-rendering:pixelated;
+#minimap-label{font-size:.6em;color:#333;letter-spacing:2px}
+#minimap{border:1px solid #252525;border-radius:3px;image-rendering:pixelated}
+
+#quest-panel{
+  background:rgba(0,0,0,.78);border:1px solid #1e1e1e;border-radius:3px;
+  padding:7px 10px;width:148px;
 }
+#quest-panel-lbl{font-size:.58em;color:#333;letter-spacing:2px;margin-bottom:5px}
+.q-item{font-size:.7em;line-height:1.7;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;color:#2a2a2a}
+.q-item.q-active{color:#888}
+.q-item.q-done{color:#1d4a25;text-decoration:line-through}
+
+/* ─── ТАЧ-УПРАВЛЕНИЕ ─── */
+#touch-ui{position:fixed;inset:0;z-index:55;pointer-events:none;display:none}
+/* Зона джойстика — левая нижняя часть экрана */
+#joy-zone{
+  position:absolute;bottom:0;left:0;width:48%;height:52%;
+  pointer-events:auto;
+}
+#joy-base{
+  position:absolute;width:120px;height:120px;display:none;pointer-events:none;
+  border:2px solid rgba(255,255,255,.18);border-radius:50%;
+  background:rgba(255,255,255,.04);box-sizing:border-box;
+}
+#joy-knob{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:46px;height:46px;border-radius:50%;
+  background:rgba(255,255,255,.22);border:2px solid rgba(255,255,255,.35);
+}
+/* Зона камеры — правая нижняя часть экрана */
+#cam-zone{
+  position:absolute;bottom:0;right:0;width:52%;height:52%;
+  pointer-events:auto;
+}
+/* Кнопки действий */
+#touch-btns{
+  position:absolute;bottom:24px;right:18px;
+  display:flex;flex-direction:column;gap:12px;pointer-events:auto;
+}
+.t-btn{
+  width:62px;height:62px;border-radius:50%;
+  background:rgba(0,0,0,.65);border:1.5px solid rgba(255,255,255,.22);
+  color:#bbb;font-family:inherit;font-size:1.05em;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  -webkit-tap-highlight-color:transparent;user-select:none;
+  pointer-events:auto;
+}
+.t-btn:active{background:rgba(255,255,255,.18)}
 
 /* ─── ПАУЗА ─── */
 #pause-hint{
@@ -200,10 +245,26 @@ canvas{display:block}
   <button id="end-btn" onclick="location.reload()">Играть снова</button>
 </div>
 
-<!-- МИНИ-КАРТА -->
+<!-- МИНИ-КАРТА + ЗАДАЧИ -->
 <div id="minimap-wrap">
   <div id="minimap-label">КАРТА</div>
-  <canvas id="minimap" width="148" height="192"></canvas>
+  <canvas id="minimap" width="148" height="148"></canvas>
+  <div id="quest-panel">
+    <div id="quest-panel-lbl">ЗАДАЧИ</div>
+    <div id="quest-list"></div>
+  </div>
+</div>
+
+<!-- ТАЧ-УПРАВЛЕНИЕ (мобильные) -->
+<div id="touch-ui">
+  <div id="joy-zone">
+    <div id="joy-base"><div id="joy-knob"></div></div>
+  </div>
+  <div id="cam-zone"></div>
+  <div id="touch-btns">
+    <button class="t-btn" id="tb-interact" title="Взаимодействие">E</button>
+    <button class="t-btn" id="tb-flash"    title="Фонарик">🔦</button>
+  </div>
 </div>
 
 <!-- ПАУЗА -->
@@ -693,11 +754,16 @@ function onKey(e){
 const vel=new THREE.Vector3();
 const dir=new THREE.Vector3();
 
+// Джойстик-переменные (тач)
+let joyActive=false, joyDX=0, joyDZ=0;
+
 function handleMovement(dt){
   if(!gameActive||paused||gs.won||gs.dead) return;
   vel.x-=vel.x*10*dt; vel.z-=vel.z*10*dt;
   dir.z=(keys['KeyW']||keys['ArrowUp']?-1:0)+(keys['KeyS']||keys['ArrowDown']?1:0);
   dir.x=(keys['KeyA']||keys['ArrowLeft']?-1:0)+(keys['KeyD']||keys['ArrowRight']?1:0);
+  // Тач-джойстик
+  dir.z+=joyDZ; dir.x+=joyDX;
   dir.normalize();
   if(dir.z) vel.z+=dir.z*SPEED*dt*10;
   if(dir.x) vel.x+=dir.x*SPEED*dt*10;
@@ -1067,6 +1133,7 @@ function updateHUD(){
     else sl.addEventListener('click',()=>msg(it.desc||it.name,2500));
     panel.appendChild(sl);
   }
+  updateQuests();
 }
 
 function msg(text, dur=2800){
@@ -1109,6 +1176,135 @@ function playScare(){
   gain.gain.value=.6;
   src.connect(gain); gain.connect(audioCtx.destination);
   src.start();
+}
+
+// ═══════════════════════════════════════════
+//  КВЕСТ-СИСТЕМА
+// ═══════════════════════════════════════════
+const QUEST_DEFS=[
+  { text:'Найти фонарик',             done:()=>true },
+  { text:'Найти ржавый ключ',         done:()=>gs.inventory.includes('ржавый ключ')||gs.visited.has('морг') },
+  { text:'Открыть дверь в морг',      done:()=>gs.visited.has('морг') },
+  { text:'Запустить генератор',        done:()=>gs.generatorOn },
+  { text:'Взломать сейф (код: ?)',     done:()=>gs.puzzleSolved },
+  { text:'Найти ключ выхода',          done:()=>gs.inventory.includes('ключ выхода') },
+  { text:'Добраться до выхода',        done:()=>gs.won },
+];
+function updateQuests(){
+  const list=document.getElementById('quest-list');
+  if(!list) return;
+  list.innerHTML='';
+  let activeShown=false;
+  for(const q of QUEST_DEFS){
+    const done=q.done();
+    const el=document.createElement('div');
+    let cls='q-item';
+    if(done){ cls+=' q-done'; }
+    else if(!activeShown){ cls+=' q-active'; activeShown=true; }
+    el.className=cls;
+    el.textContent=(done?'✓ ':'› ')+q.text;
+    list.appendChild(el);
+  }
+}
+
+// ═══════════════════════════════════════════
+//  ТАЧ-УПРАВЛЕНИЕ (мобильные / планшеты)
+// ═══════════════════════════════════════════
+const IS_TOUCH=('ontouchstart' in window)||navigator.maxTouchPoints>0;
+const joyBase=document.getElementById('joy-base');
+const joyKnob=document.getElementById('joy-knob');
+const joyZone=document.getElementById('joy-zone');
+const camZone=document.getElementById('cam-zone');
+const JOY_R=55; // радиус джойстика
+
+let joyTouchId=null, joyOriginX=0, joyOriginY=0;
+let camTouchId=null, camLastX=0, camLastY=0;
+
+if(IS_TOUCH){
+  document.getElementById('touch-ui').style.display='block';
+
+  // ─ Джойстик ─
+  joyZone.addEventListener('touchstart',e=>{
+    e.preventDefault();
+    if(!gameActive||paused||gs.won||gs.dead) return;
+    if(joyTouchId!==null) return;
+    const t=e.changedTouches[0];
+    joyTouchId=t.identifier;
+    // Центр джойстика — место касания
+    const rect=joyZone.getBoundingClientRect();
+    joyOriginX=t.clientX-rect.left;
+    joyOriginY=t.clientY-rect.top;
+    joyBase.style.left=(joyOriginX-60)+'px';
+    joyBase.style.top =(joyOriginY-60)+'px';
+    joyBase.style.display='block';
+    joyKnob.style.transform='translate(-50%,-50%)';
+    joyDX=0; joyDZ=0;
+  },{passive:false});
+
+  joyZone.addEventListener('touchmove',e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      if(t.identifier!==joyTouchId) continue;
+      const rect=joyZone.getBoundingClientRect();
+      let dx=t.clientX-rect.left-joyOriginX;
+      let dz=t.clientY-rect.top -joyOriginY;
+      const len=Math.sqrt(dx*dx+dz*dz);
+      if(len>JOY_R){ dx=dx/len*JOY_R; dz=dz/len*JOY_R; }
+      joyDX=dx/JOY_R; joyDZ=dz/JOY_R;
+      joyKnob.style.transform=`translate(calc(-50% + ${dx}px), calc(-50% + ${dz}px))`;
+    }
+  },{passive:false});
+
+  const joyEnd=e=>{
+    for(const t of e.changedTouches){
+      if(t.identifier!==joyTouchId) continue;
+      joyTouchId=null; joyDX=0; joyDZ=0;
+      joyBase.style.display='none';
+      joyKnob.style.transform='translate(-50%,-50%)';
+    }
+  };
+  joyZone.addEventListener('touchend',  joyEnd,{passive:true});
+  joyZone.addEventListener('touchcancel',joyEnd,{passive:true});
+
+  // ─ Камера (правая половина) ─
+  camZone.addEventListener('touchstart',e=>{
+    if(!gameActive||paused||gs.won||gs.dead) return;
+    for(const t of e.changedTouches){
+      if(camTouchId===null){
+        camTouchId=t.identifier;
+        camLastX=t.clientX; camLastY=t.clientY;
+      }
+    }
+  },{passive:true});
+
+  camZone.addEventListener('touchmove',e=>{
+    if(!gameActive||paused||gs.won||gs.dead) return;
+    for(const t of e.changedTouches){
+      if(t.identifier!==camTouchId) continue;
+      const dx=t.clientX-camLastX;
+      const dy=t.clientY-camLastY;
+      yaw  -=dx*SENS*1.6;
+      pitch =Math.max(-Math.PI/2.1,Math.min(Math.PI/2.1,pitch-dy*SENS*1.6));
+      camera.rotation.y=yaw; camera.rotation.x=pitch;
+      camLastX=t.clientX; camLastY=t.clientY;
+    }
+  },{passive:true});
+
+  const camEnd=e=>{
+    for(const t of e.changedTouches){
+      if(t.identifier===camTouchId) camTouchId=null;
+    }
+  };
+  camZone.addEventListener('touchend',  camEnd,{passive:true});
+  camZone.addEventListener('touchcancel',camEnd,{passive:true});
+
+  // ─ Кнопки действий ─
+  document.getElementById('tb-interact').addEventListener('touchstart',e=>{
+    e.preventDefault(); if(gameActive&&!paused) interact();
+  },{passive:false});
+  document.getElementById('tb-flash').addEventListener('touchstart',e=>{
+    e.preventDefault(); if(gameActive&&!paused) toggleFlash();
+  },{passive:false});
 }
 
 // ═══════════════════════════════════════════
