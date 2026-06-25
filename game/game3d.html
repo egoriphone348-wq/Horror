@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Подвал Безумия 3D</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden;font-family:'Courier New',monospace;color:#ccc;user-select:none}
+canvas{display:block}
+
+/* ─── ОВЕРЛЕЙ СТАРТА ─── */
+#overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,0.96);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;
+}
+#overlay h1{color:#cc0000;font-size:2.8em;text-shadow:0 0 30px #ff0000,0 0 60px #880000;margin-bottom:8px;letter-spacing:4px}
+#overlay .sub{color:#555;font-size:.85em;margin-bottom:40px}
+#start-btn{
+  padding:14px 50px;background:#0d1f0d;border:1px solid #00d26a;
+  color:#00d26a;font-family:inherit;font-size:1.1em;cursor:pointer;border-radius:3px;
+  letter-spacing:2px;transition:all .2s;
+}
+#start-btn:hover{background:#142414;box-shadow:0 0 20px #00d26a44}
+#ctrl-hint{margin-top:28px;font-size:.76em;color:#444;text-align:center;line-height:2}
+#ctrl-hint span{color:#666}
+
+/* ─── HUD ─── */
+#hud{position:fixed;inset:0;pointer-events:none;z-index:50}
+#room-name{
+  position:absolute;top:16px;left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,.75);padding:6px 20px;border:1px solid #2a2a2a;
+  font-size:.85em;color:#999;border-radius:3px;letter-spacing:1px;
+}
+#top-right{position:absolute;top:16px;right:20px;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+#sanity-wrap{display:flex;align-items:center;gap:8px}
+#sanity-lbl{font-size:.7em;color:#555;letter-spacing:2px}
+#sanity-bg{width:130px;height:7px;background:#111;border:1px solid #2a2a2a;border-radius:4px;overflow:hidden}
+#sanity-fill{height:100%;width:100%;background:#00d26a;border-radius:4px;transition:width .6s,background .6s}
+#flashlight-icon{font-size:.8em;color:#333;transition:color .3s}
+
+#inventory{
+  position:absolute;bottom:18px;left:50%;transform:translateX(-50%);
+  display:flex;gap:8px;align-items:center;
+}
+.slot{
+  width:48px;height:48px;border:1px solid #2a2a2a;background:rgba(0,0,0,.75);
+  display:flex;align-items:center;justify-content:center;border-radius:3px;
+  font-size:1.4em;position:relative;pointer-events:auto;cursor:default;
+  transition:border-color .2s;
+}
+.slot:hover{border-color:#555}
+.slot-tip{
+  position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  background:#111;border:1px solid #333;padding:4px 10px;white-space:nowrap;
+  font-size:.65em;color:#aaa;border-radius:2px;display:none;z-index:10;
+}
+.slot:hover .slot-tip{display:block}
+
+#msg{
+  position:absolute;bottom:82px;left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,.88);border:1px solid #2e2e2e;padding:10px 22px;
+  max-width:520px;text-align:center;font-size:.84em;color:#ccc;border-radius:3px;
+  opacity:0;transition:opacity .35s;pointer-events:none;line-height:1.5;
+}
+#crosshair{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-55%);
+  color:rgba(255,255,255,.35);font-size:22px;line-height:1;
+}
+#interact{
+  position:absolute;top:53%;left:50%;transform:translateX(-50%);
+  color:rgba(255,255,255,.55);font-size:.78em;background:rgba(0,0,0,.55);
+  padding:4px 14px;border-radius:3px;display:none;
+}
+
+/* ─── ЭФФЕКТЫ РАССУДКА ─── */
+#vignette{
+  position:fixed;inset:0;pointer-events:none;z-index:45;
+  background:radial-gradient(ellipse at center,transparent 50%,rgba(60,0,0,0) 100%);
+  transition:background .8s;
+}
+
+/* ─── ДЖАМПСКЕР ─── */
+#jumpscare{
+  position:fixed;inset:0;background:#cc0000;
+  display:none;align-items:center;justify-content:center;z-index:200;
+  font-size:4.5em;font-weight:bold;color:#fff;text-shadow:0 0 30px #000;letter-spacing:4px;
+}
+
+/* ─── СЕЙФ ─── */
+#safe-modal{
+  position:fixed;inset:0;background:rgba(0,0,0,.92);
+  display:none;align-items:center;justify-content:center;z-index:120;
+}
+#safe-box{
+  border:1px solid #444;background:#080808;padding:32px 44px;border-radius:4px;text-align:center;
+  box-shadow:0 0 40px #00000088;
+}
+#safe-box h3{color:#cc6600;margin-bottom:8px;font-size:1.1em;letter-spacing:2px}
+#safe-box p{color:#666;font-size:.82em;margin-bottom:22px;line-height:1.6}
+#safe-input{
+  background:#111;border:1px solid #444;color:#00d26a;
+  font-family:inherit;font-size:1.8em;text-align:center;
+  width:130px;padding:8px;letter-spacing:.5em;border-radius:3px;
+}
+#safe-ok{
+  display:block;margin:16px auto 0;padding:8px 28px;background:#0d1f0d;
+  border:1px solid #00d26a44;color:#00d26a;font-family:inherit;cursor:pointer;border-radius:3px;
+}
+#safe-esc{margin-top:10px;color:#444;font-size:.75em;cursor:pointer}
+#safe-esc:hover{color:#888}
+
+/* ─── ФИНАЛ ─── */
+#endscreen{
+  position:fixed;inset:0;background:rgba(0,0,0,.96);
+  display:none;flex-direction:column;align-items:center;justify-content:center;z-index:150;
+}
+#end-title{font-size:3em;margin-bottom:18px;letter-spacing:4px}
+#end-text{max-width:520px;text-align:center;color:#777;margin-bottom:34px;line-height:1.8;font-size:.9em}
+#end-btn{
+  padding:11px 34px;background:#111;border:1px solid #444;
+  color:#888;font-family:inherit;cursor:pointer;border-radius:3px;font-size:1em;
+}
+#end-btn:hover{border-color:#888;color:#ccc}
+
+/* ─── ПАУЗА ─── */
+#pause-hint{
+  position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+  z-index:90;
+}
+#pause-inner{
+  background:rgba(0,0,0,.85);border:1px solid #2a2a2a;padding:24px 44px;text-align:center;
+}
+#pause-inner p{color:#555;margin-bottom:14px;font-size:.85em}
+#resume-btn{
+  padding:8px 28px;background:#0d1f0d;border:1px solid #00d26a44;
+  color:#00d26a;font-family:inherit;cursor:pointer;border-radius:3px;
+}
+</style>
+</head>
+<body>
+
+<!-- СТАРТ -->
+<div id="overlay">
+  <h1>ПОДВАЛ БЕЗУМИЯ</h1>
+  <div class="sub">Текстовая хоррор-игра · Заброшенная психиатрическая больница</div>
+  <button id="start-btn">▶ НАЧАТЬ ИГРУ</button>
+  <div id="ctrl-hint">
+    <span>WASD</span> — движение &nbsp;·&nbsp; <span>Мышь</span> — обзор<br>
+    <span>E</span> — взаимодействие &nbsp;·&nbsp; <span>F</span> — фонарик<br>
+    <span>ESC</span> — пауза
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="room-name">Вход в подвал</div>
+  <div id="top-right">
+    <div id="sanity-wrap">
+      <span id="sanity-lbl">РАССУДОК</span>
+      <div id="sanity-bg"><div id="sanity-fill"></div></div>
+    </div>
+    <div id="flashlight-icon">🔦 выключен</div>
+  </div>
+  <div id="inventory"></div>
+  <div id="crosshair">+</div>
+  <div id="interact">[ E ] взаимодействовать</div>
+  <div id="msg"></div>
+</div>
+
+<div id="vignette"></div>
+<div id="jumpscare"></div>
+
+<!-- СЕЙФ -->
+<div id="safe-modal">
+  <div id="safe-box">
+    <h3>🔐 КОДОВЫЙ СЕЙФ</h3>
+    <p>Четырёхзначный замок.<br>На стене мелом нацарапаны цифры…<br>Введи код.</p>
+    <input id="safe-input" type="text" maxlength="4" placeholder="____" autocomplete="off" inputmode="numeric">
+    <button id="safe-ok">Открыть</button>
+    <div id="safe-esc">ESC — закрыть</div>
+  </div>
+</div>
+
+<!-- ФИНАЛ -->
+<div id="endscreen">
+  <div id="end-title"></div>
+  <div id="end-text"></div>
+  <button id="end-btn" onclick="location.reload()">Играть снова</button>
+</div>
+
+<!-- ПАУЗА -->
+<div id="pause-hint">
+  <div id="pause-inner">
+    <p>— ПАУЗА —</p>
+    <button id="resume-btn">Продолжить</button>
+  </div>
+</div>
+
+<!-- THREE.JS (ES Module) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+// ═══════════════════════════════════════════
+//  КОНСТАНТЫ
+// ═══════════════════════════════════════════
+const CELL   = 20;   // расстояние между центрами комнат
+const RW     = 12;   // ширина/глубина комнаты (внутри)
+const RH     = 3.8;  // высота потолка
+const DW     = 3.8;  // ширина проёма двери
+const DH     = 3.0;  // высота проёма двери
+const WT     = 0.25; // толщина стены
+const EYE    = 1.65; // высота глаз игрока
+const SPEED  = 5.5;  // скорость движения
+const DRAIN_MS = 3500; // мс между тиками рассудка
+
+// ═══════════════════════════════════════════
+//  ОПИСАНИЕ КОМНАТ
+// ═══════════════════════════════════════════
+const ROOMS = {
+  'вход': {
+    name:'Вход в подвал', emoji:'🚪',
+    pos:[20,40],
+    desc:'Ты очнулся на холодном бетонном полу. Сырость, хлорка, запах страха. Нужно выбраться.',
+    exits:{ north:'коридор а', east:'процедурная' },
+    items:['фонарик'], dark:false, drain:0,
+    wall:0x2a2a2a, floor:0x1a1a1a, light:0x223311, li:0.35,
+    events:['Лампа над твоей головой мигает трижды и гаснет. Потом снова загорается.'],
+  },
+  'коридор а': {
+    name:'Коридор А', emoji:'🌑',
+    pos:[20,20],
+    desc:'Длинный коридор уходит в темноту. На стенах царапины: «ПОМОГИТЕ», «НЕ СПИТЕ», «ОН СЛЫШИТ ВСЁ».',
+    exits:{ south:'вход', north:'палата №7', west:'электрощитовая', east:'коридор б' },
+    items:[], dark:true, drain:3,
+    wall:0x252525, floor:0x181818, light:0x111111, li:0.12,
+    events:['В дальнем конце коридора что-то мелькнуло.','Ты слышишь детский смех. Он обрывается внезапно.'],
+  },
+  'палата №7': {
+    name:'Старая палата №7', emoji:'🛏️',
+    pos:[20,0],
+    desc:'Три ржавые кровати, порванные матрасы. Рисунки на стенах — спирали, глаза, фигуры без лиц. Бурые пятна на полу.',
+    exits:{ south:'коридор а' },
+    items:['ржавый ключ','карточка пациента'], dark:true, drain:5,
+    wall:0x2a1a1a, floor:0x1a1212, light:0x220808, li:0.08,
+    events:['Кровать скрипит. Сама. Потом — тишина.','Из-под кровати тянет холодом. Ты не смотришь.'],
+  },
+  'процедурная': {
+    name:'Процедурная', emoji:'🏥',
+    pos:[40,40],
+    desc:'Стол с кожаными ремнями посередине. Ремни потемнели и потрескались. Медицинские инструменты разбросаны по полу.',
+    exits:{ west:'вход', north:'коридор б', east:'склад медикаментов' },
+    items:['скальпель','магнитофонная лента'], dark:false, drain:4,
+    wall:0x2a2a1a, floor:0x1a1a12, light:0x1a1a00, li:0.18,
+    events:['Ремни на операционном столе слегка покачиваются. Без сквозняка.'],
+  },
+  'коридор б': {
+    name:'Коридор Б', emoji:'🌑',
+    pos:[40,20],
+    desc:'Узкий коридор. Потолок ниже, трубы ближе. Из одной трубы капает что-то тёмное.',
+    exits:{ west:'коридор а', south:'процедурная', north:'морг' },
+    items:['железный прут'], dark:true, drain:5,
+    wall:0x252525, floor:0x181818, light:0x0a0a0a, li:0.08,
+    events:['Одна из запертых дверей ударяется изнутри. Один раз.','Ты слышишь дыхание. Не своё.'],
+    locked:{ north:{ item:'ржавый ключ', msg:'🔒 Дверь в морг заперта. Нужен ключ.' } },
+  },
+  'электрощитовая': {
+    name:'Электрощитовая', emoji:'⚡',
+    pos:[0,20],
+    desc:'Старые рубильники, перегоревшие предохранители, паутина. В центре — дизельный генератор.',
+    exits:{ east:'коридор а' },
+    items:['канистра'], dark:true, drain:2,
+    wall:0x1a1a2a, floor:0x12121a, light:0x000011, li:0.08,
+    events:['Рубильник сам по себе переключается.','Генератор издаёт глухой стон.'],
+    hasGenerator:true,
+  },
+  'склад медикаментов': {
+    name:'Склад медикаментов', emoji:'💊',
+    pos:[60,40],
+    desc:'Длинные стеллажи с разбитыми флаконами. Большинство лекарств просрочено. Запах химии и плесени.',
+    exits:{ west:'процедурная' },
+    items:['бензин','успокоительное'], dark:false, drain:1,
+    wall:0x2a2a2a, floor:0x1a1a1a, light:0x111100, li:0.22,
+    events:['Флакон с полки падает сам по себе. Разбивается о пол.'],
+  },
+  'морг': {
+    name:'Морг', emoji:'☠️',
+    pos:[40,0],
+    desc:'Холод обнимает тебя как старый знакомый. Металлические секции для тел. На столе — что-то под простынёй. На стене мелом: «3-7-2-1».',
+    exits:{ south:'коридор б', north:'изолятор' },
+    items:[], dark:false, drain:10,
+    wall:0x1a2a2a, floor:0x111a1a, light:0x001111, li:0.12,
+    events:['Одна из секций движется. Изнутри.','Простыня на столе медленно сползает.'],
+    locked:{ north:{ item:'железный прут', msg:'🔒 Дверь в изолятор заколочена. Нужен рычаг.' } },
+    hasSafe:true,
+  },
+  'изолятор': {
+    name:'Изолятор', emoji:'🔒',
+    pos:[40,-20],
+    desc:'Комната без окон. Стены обиты мягким материалом — жёлто-серым и разодранным. «ВЫПУСТИТЕ МЕНЯ», «ОН ПРИХОДИТ НОЧЬЮ».',
+    exits:{ south:'морг', north:'кабинет главврача' },
+    items:[], dark:true, drain:12,
+    wall:0x2a2520, floor:0x1a1812, light:0x110800, li:0.06,
+    events:['Дверь за тобой закрывается. Сама открывается.','Надписей на стене стало больше. Или нет?'],
+  },
+  'кабинет главврача': {
+    name:'Кабинет главврача', emoji:'🖊️',
+    pos:[40,-40],
+    desc:'Массивный стол, перевёрнутое кресло. Дипломы на стенах — на всех лицах вырезаны глаза. Запах сигарного дыма.',
+    exits:{ south:'изолятор', north:'выход' },
+    items:['записка главврача'], dark:false, drain:6,
+    wall:0x2a2015, floor:0x1a1510, light:0x1a1000, li:0.18,
+    events:['Бумаги на столе шелестят. Ни одного сквозняка.'],
+  },
+  'выход': {
+    name:'Аварийный выход', emoji:'🚪',
+    pos:[40,-60],
+    desc:'Металлическая дверь с красным знаком «ВЫХОД». Сквозь щели — свежий воздух снаружи.',
+    exits:{ south:'кабинет главврача' },
+    items:[], dark:false, drain:0,
+    wall:0x2a2a2a, floor:0x1a1a1a, light:0x112211, li:0.3,
+    events:[], isExit:true,
+  },
+};
+
+// ═══════════════════════════════════════════
+//  ПРЕДМЕТЫ
+// ═══════════════════════════════════════════
+const ITEMS = {
+  'фонарик':            { name:'Фонарик',            emoji:'🔦', col:0xffdd88, desc:'Старый фонарик. Батарейки почти сели, но работает.' },
+  'ржавый ключ':        { name:'Ржавый ключ',         emoji:'🗝️', col:0xaa6633, desc:'Тяжёлый ключ с биркой «ПАЛАТА №7».' },
+  'канистра':           { name:'Канистра (пустая)',    emoji:'🪣', col:0x888888, desc:'Пустая металлическая канистра. Пахнет бензином.' },
+  'бензин':             { name:'Бензин',              emoji:'🛢️', col:0xcc8800, desc:'Немного бензина в пластиковой бутылке.' },
+  'канистра с бензином':{ name:'Канистра с бензином',  emoji:'⛽', col:0xffaa00, desc:'Канистра, заполненная бензином. Готова к использованию.' },
+  'скальпель':          { name:'Скальпель',           emoji:'🔪', col:0xaaaacc, desc:'Медицинский скальпель. Острый, несмотря на ржавчину.' },
+  'записка главврача':  { name:'Записка главврача',    emoji:'📝', col:0xdddd88, desc:'«Код сейфа: 3-7-2-1. Никто не должен знать.»' },
+  'успокоительное':     { name:'Успокоительное',      emoji:'💊', col:0x88aaff, desc:'Восстанавливает рассудок.', sanity:25, use:true },
+  'железный прут':      { name:'Железный прут',       emoji:'🔩', col:0x666677, desc:'Кусок арматуры. Рычаг или оружие.' },
+  'магнитофонная лента':{ name:'Кассета',             emoji:'📼', col:0x443322, desc:'«Сеанс 48-Б. Пациент Икс. СЕКРЕТНО».' },
+  'карточка пациента':  { name:'Карточка пациента',   emoji:'📋', col:0xddddaa, desc:'Карточка пациента №48. «Диагноз: острый психоз».' },
+  'ключ выхода':        { name:'Ключ выхода',         emoji:'🔑', col:0xffdd00, desc:'Большой ключ с табличкой «ВЫХОД». Долгожданный.' },
+};
+
+// ═══════════════════════════════════════════
+//  СОСТОЯНИЕ ИГРЫ
+// ═══════════════════════════════════════════
+const gs = {
+  room: 'вход',
+  inventory: [],
+  sanity: 100,
+  turns: 0,
+  flashOn: false,
+  generatorOn: false,
+  puzzleSolved: false,
+  unlocked: new Set(),
+  won: false, dead: false,
+  entityRoom: null, entityActive: false,
+  entityTimer: 0, entityEncounters: 0,
+  roomItems: {},     // key → [item,...]
+  visited: new Set(),
+  firstDesc: new Set(),
+};
+for (const [k,r] of Object.entries(ROOMS)) gs.roomItems[k] = [...(r.items||[])];
+
+// ═══════════════════════════════════════════
+//  THREE.JS
+// ═══════════════════════════════════════════
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = false;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x000000, 0.055);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 80);
+const controls = new PointerLockControls(camera, renderer.domElement);
+
+// Глобальное освещение (очень тёмное)
+const ambient = new THREE.AmbientLight(0x111111, 0.25);
+scene.add(ambient);
+
+// Фонарик — SpotLight прикреплён к камере
+const torch = new THREE.SpotLight(0xffeedd, 0, 35, Math.PI*0.11, 0.4, 1.8);
+const torchTarget = new THREE.Object3D();
+torchTarget.position.set(0,0,-1);
+camera.add(torch);
+camera.add(torchTarget);
+torch.target = torchTarget;
+scene.add(camera);
+
+// Свет комнаты (меняется при переходе)
+const roomPL = new THREE.PointLight(0x223311, 0.35, 22);
+scene.add(roomPL);
+
+// Точечные лампы в освещённых комнатах
+const staticLights = [];
+
+// ═══════════════════════════════════════════
+//  ПРОЦЕДУРНЫЕ ТЕКСТУРЫ
+// ═══════════════════════════════════════════
+const texCache = {};
+function makeTex(hexBase, varAmount) {
+  const key = hexBase + '_' + varAmount;
+  if (texCache[key]) return texCache[key];
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 256;
+  const ctx = cv.getContext('2d');
+  const r=(hexBase>>16)&0xff, g=(hexBase>>8)&0xff, b=hexBase&0xff;
+  ctx.fillStyle=`rgb(${r},${g},${b})`;
+  ctx.fillRect(0,0,256,256);
+  for(let i=0;i<15000;i++){
+    const x=Math.random()*256,y=Math.random()*256;
+    const v=(Math.random()-.5)*varAmount;
+    const lv=Math.min(255,Math.max(0,r+v));
+    ctx.fillStyle=`rgba(${lv},${Math.min(255,Math.max(0,g+v))},${Math.min(255,Math.max(0,b+v))},.35)`;
+    ctx.fillRect(x,y,2,2);
+  }
+  ctx.strokeStyle='rgba(0,0,0,.12)'; ctx.lineWidth=.6;
+  for(let i=0;i<6;i++){
+    ctx.beginPath(); ctx.moveTo(Math.random()*256,Math.random()*256);
+    for(let j=0;j<4;j++) ctx.lineTo(Math.random()*256,Math.random()*256);
+    ctx.stroke();
+  }
+  const t=new THREE.CanvasTexture(cv);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(2,1);
+  texCache[key]=t; return t;
+}
+
+// ═══════════════════════════════════════════
+//  СТРОИТЕЛЬСТВО ПОДЗЕМЕЛЬЯ
+// ═══════════════════════════════════════════
+const itemMeshes = []; // { mesh, light, itemName, roomKey }
+let shadowEntity = null;
+
+function buildDungeon() {
+  for(const [k,r] of Object.entries(ROOMS)) buildRoom(k,r);
+  const built = new Set();
+  for(const [k,r] of Object.entries(ROOMS)){
+    for(const [dir,tgt] of Object.entries(r.exits)){
+      const pair=[k,tgt].sort().join('|');
+      if(built.has(pair)) continue;
+      built.add(pair);
+      buildCorridor(k,dir,tgt);
+    }
+  }
+  for(const [k,r] of Object.entries(ROOMS)) spawnItems(k,r);
+  shadowEntity = buildShadow();
+  shadowEntity.visible = false;
+  scene.add(shadowEntity);
+  addFurniture();
+}
+
+function box(x,y,z,w,h,d,mat){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+  m.position.set(x,y,z); scene.add(m); return m;
+}
+
+function wallMat(hex){ return new THREE.MeshLambertMaterial({map:makeTex(hex,55)}); }
+function flatMat(hex){ return new THREE.MeshLambertMaterial({color:hex}); }
+
+function buildWall(wx,wz,alongX,roomW,hasExit,mat){
+  const pw=(roomW-DW)/2;
+  const topH=RH-DH;
+  if(!hasExit){
+    if(alongX) box(wx,RH/2,wz,roomW,RH,WT,mat);
+    else        box(wx,RH/2,wz,WT,RH,roomW,mat);
+  } else {
+    const off=DW/2+pw/2;
+    if(alongX){
+      box(wx-off, RH/2, wz, pw, RH, WT, mat);
+      box(wx+off, RH/2, wz, pw, RH, WT, mat);
+      if(topH>0) box(wx, DH+topH/2, wz, DW, topH, WT, mat);
+    } else {
+      box(wx, RH/2, wz-off, WT, RH, pw, mat);
+      box(wx, RH/2, wz+off, WT, RH, pw, mat);
+      if(topH>0) box(wx, DH+topH/2, wz, WT, topH, DW, mat);
+    }
+  }
+}
+
+function buildRoom(key,r){
+  const [cx,cz]=r.pos;
+  const hw=RW/2;
+  const wm=wallMat(r.wall), fm=flatMat(r.floor), cm=flatMat(r.wall&0x1f1f1f|0x111111);
+  // Пол и потолок
+  box(cx,-WT/2,cz,RW+WT*2,WT,RW+WT*2,fm);
+  box(cx,RH+WT/2,cz,RW+WT*2,WT,RW+WT*2,cm);
+  // Стены
+  const ex=r.exits||{};
+  buildWall(cx, cz-hw, true,  RW, !!ex.north, wm);
+  buildWall(cx, cz+hw, true,  RW, !!ex.south, wm);
+  buildWall(cx+hw, cz, false, RW, !!ex.east,  wm);
+  buildWall(cx-hw, cz, false, RW, !!ex.west,  wm);
+  // Статический свет (в светлых комнатах)
+  if(!r.dark){
+    const pl=new THREE.PointLight(r.light, r.li*1.4, 18);
+    pl.position.set(cx, RH-0.4, cz);
+    pl.userData={flicker:true, base:r.li*1.4, phase:Math.random()*Math.PI*2};
+    scene.add(pl);
+    staticLights.push(pl);
+  }
+}
+
+function buildCorridor(kA,dir,kB){
+  const rA=ROOMS[kA], rB=ROOMS[kB];
+  if(!rA||!rB) return;
+  const [ax,az]=rA.pos, [bx,bz]=rB.pos;
+  const mx=(ax+bx)/2, mz=(az+bz)/2;
+  const isNS=(dir==='north'||dir==='south');
+  const len=isNS ? Math.abs(bz-az)-RW : Math.abs(bx-ax)-RW;
+  if(len<=0) return;
+  const cm=flatMat(0x1e1e1e), fm=flatMat(0x161616);
+  if(isNS){
+    box(mx,-WT/2,mz,DW,WT,len,fm);
+    box(mx,RH+WT/2,mz,DW,WT,len,cm);
+    box(mx-DW/2,RH/2,mz,WT,RH,len,cm);
+    box(mx+DW/2,RH/2,mz,WT,RH,len,cm);
+  } else {
+    box(mx,-WT/2,mz,len,WT,DW,fm);
+    box(mx,RH+WT/2,mz,len,WT,DW,cm);
+    box(mx,RH/2,mz-DW/2,len,RH,WT,cm);
+    box(mx,RH/2,mz+DW/2,len,RH,WT,cm);
+  }
+}
+
+// ═══════════════════════════════════════════
+//  ПРЕДМЕТЫ В КОМНАТАХ
+// ═══════════════════════════════════════════
+function spawnItems(key,r){
+  const items=gs.roomItems[key]||[];
+  const [cx,cz]=r.pos;
+  items.forEach((name,i)=>{
+    const it=ITEMS[name]; if(!it) return;
+    const angle=(i/Math.max(items.length,1))*Math.PI*2;
+    const rad=2.8;
+    const x=cx+Math.cos(angle)*rad, z=cz+Math.sin(angle)*rad;
+    const geo = name==='успокоительное' ? new THREE.SphereGeometry(.18,8,8)
+               : name==='фонарик' ? new THREE.CylinderGeometry(.08,.12,.5,8)
+               : new THREE.BoxGeometry(.3,.3,.3);
+    const mat=new THREE.MeshLambertMaterial({color:it.col,emissive:it.col,emissiveIntensity:.5});
+    const mesh=new THREE.Mesh(geo,mat);
+    mesh.position.set(x,.45,z);
+    mesh.userData={itemName:name,roomKey:key};
+    scene.add(mesh);
+    const light=new THREE.PointLight(it.col,.8,3.5);
+    light.position.copy(mesh.position);
+    scene.add(light);
+    itemMeshes.push({mesh,light,itemName:name,roomKey:key});
+  });
+}
+
+function removeItemMesh(name,key){
+  const idx=itemMeshes.findIndex(e=>e.itemName===name&&e.roomKey===key);
+  if(idx===-1) return;
+  const {mesh,light}=itemMeshes[idx];
+  scene.remove(mesh); scene.remove(light);
+  mesh.geometry.dispose(); itemMeshes.splice(idx,1);
+}
+
+// ═══════════════════════════════════════════
+//  МЕБЕЛЬ / ДЕКОРАЦИИ
+// ═══════════════════════════════════════════
+function addFurniture(){
+  const dm=flatMat(0x1a1a1a);
+  // Палата №7 — кровати
+  const [w7x,w7z]=ROOMS['палата №7'].pos;
+  for(let i=0;i<3;i++) box(w7x-3+i*3,0.3,w7z,.9,.4,2,flatMat(0x2a1a1a));
+  // Процедурная — стол
+  const [px,pz]=ROOMS['процедурная'].pos;
+  box(px,0.45,pz,0.7,.9,2.2,flatMat(0x888877));
+  // Электрощитовая — генератор
+  const [gx,gz]=ROOMS['электрощитовая'].pos;
+  box(gx,0.65,gz,1.6,1.3,0.9,flatMat(0x334444));
+  box(gx,1.35,gz+0.2,1.6,.12,.7,flatMat(0x222222));
+  // Морг — стол + секции
+  const [mx,mz]=ROOMS['морг'].pos;
+  box(mx,0.45,mz,0.7,.9,2,flatMat(0x888899));
+  for(let i=0;i<3;i++) box(mx+3.5,0.65+i*.65,mz-3+i*2.5,.3,1.3,.9,flatMat(0x555566));
+  // Кабинет — стол
+  const [kx,kz]=ROOMS['кабинет главврача'].pos;
+  box(kx,0.45,kz,1.8,.9,0.9,flatMat(0x3a2a15));
+  box(kx-3,0.9,kz,0.5,1.8,.6,flatMat(0x2a1f10));
+}
+
+// ═══════════════════════════════════════════
+//  СУЩНОСТЬ — ТЕНЬ
+// ═══════════════════════════════════════════
+function buildShadow(){
+  const g=new THREE.Group();
+  const dm=new THREE.MeshLambertMaterial({color:0x050508,emissive:0x050508,emissiveIntensity:1.5});
+  const torso=new THREE.Mesh(new THREE.BoxGeometry(.5,.9,.25),dm); torso.position.y=1.3; g.add(torso);
+  const head=new THREE.Mesh(new THREE.BoxGeometry(.42,.46,.36),dm); head.position.y=2.0; g.add(head);
+  const armL=new THREE.Mesh(new THREE.BoxGeometry(.18,.85,.18),dm); armL.position.set(-.38,1.2,0); armL.rotation.z=.2; g.add(armL);
+  const armR=new THREE.Mesh(new THREE.BoxGeometry(.18,.85,.18),dm); armR.position.set(.38,1.2,0); armR.rotation.z=-.2; g.add(armR);
+  const legL=new THREE.Mesh(new THREE.BoxGeometry(.2,.75,.2),dm); legL.position.set(-.15,.38,0); g.add(legL);
+  const legR=new THREE.Mesh(new THREE.BoxGeometry(.2,.75,.2),dm); legR.position.set(.15,.38,0); g.add(legR);
+  const em=new THREE.MeshLambertMaterial({color:0xff0000,emissive:0xff0000,emissiveIntensity:3});
+  const eL=new THREE.Mesh(new THREE.SphereGeometry(.055,6,6),em); eL.position.set(-.1,2.04,.19); g.add(eL);
+  const eR=new THREE.Mesh(new THREE.SphereGeometry(.055,6,6),em); eR.position.set(.1,2.04,.19); g.add(eR);
+  return g;
+}
+
+// ═══════════════════════════════════════════
+//  УПРАВЛЕНИЕ ИГРОКОМ
+// ═══════════════════════════════════════════
+camera.position.set(ROOMS['вход'].pos[0], EYE, ROOMS['вход'].pos[1]);
+
+const keys={};
+let safeOpen=false, paused=false;
+let lastDrain=0, msgTimer=null;
+
+document.addEventListener('keydown',e=>{keys[e.code]=true; onKey(e);});
+document.addEventListener('keyup',  e=>{keys[e.code]=false;});
+
+function onKey(e){
+  if(e.code==='KeyF' && controls.isLocked) toggleFlash();
+  if(e.code==='KeyE' && controls.isLocked) interact();
+  if(e.code==='Escape'){
+    if(safeOpen){ closeSafe(); return; }
+    if(controls.isLocked) controls.unlock(); else controls.lock();
+  }
+}
+
+const vel=new THREE.Vector3();
+const dir=new THREE.Vector3();
+
+function handleMovement(dt){
+  if(!controls.isLocked||gs.won||gs.dead) return;
+  vel.x-=vel.x*10*dt; vel.z-=vel.z*10*dt;
+  dir.z=(keys['KeyW']||keys['ArrowUp']?-1:0)+(keys['KeyS']||keys['ArrowDown']?1:0);
+  dir.x=(keys['KeyA']||keys['ArrowLeft']?-1:0)+(keys['KeyD']||keys['ArrowRight']?1:0);
+  dir.normalize();
+  if(dir.z) vel.z+=dir.z*SPEED*dt*10;
+  if(dir.x) vel.x+=dir.x*SPEED*dt*10;
+  controls.moveRight(vel.x*dt);
+  controls.moveForward(-vel.z*dt);
+  camera.position.y=EYE;
+  // Ограничение мира
+  camera.position.x=Math.max(-8,Math.min(72,camera.position.x));
+  camera.position.z=Math.max(-72,Math.min(52,camera.position.z));
+
+  const newRoom=nearestRoom();
+  if(newRoom && newRoom!==gs.room) tryEnter(newRoom);
+}
+
+function nearestRoom(){
+  let best=null, bd=Infinity;
+  const px=camera.position.x, pz=camera.position.z;
+  for(const[k,r] of Object.entries(ROOMS)){
+    const dx=px-r.pos[0], dz=pz-r.pos[1];
+    const d=dx*dx+dz*dz;
+    if(d<bd){bd=d;best=k;}
+  }
+  return best;
+}
+
+// ═══════════════════════════════════════════
+//  ВХОД В КОМНАТУ
+// ═══════════════════════════════════════════
+function tryEnter(key){
+  const from=gs.room;
+  const fromR=ROOMS[from];
+  // Найти направление
+  let dir2=null;
+  if(fromR?.exits) for(const[d,t] of Object.entries(fromR.exits)) if(t===key){dir2=d;break;}
+  // Проверить замок
+  if(dir2 && fromR?.locked?.[dir2]){
+    const lock=fromR.locked[dir2];
+    const pairKey=`${from}->${key}`;
+    if(!gs.unlocked.has(pairKey)){
+      if(gs.inventory.includes(lock.item)){
+        gs.unlocked.add(pairKey);
+        msg(`🔓 Ты используешь ${ITEMS[lock.item]?.name||lock.item} и открываешь дверь.`);
+      } else {
+        // Оттолкнуть назад
+        const rr=ROOMS[from];
+        camera.position.set(rr.pos[0],EYE,rr.pos[1]);
+        msg(lock.msg,3500);
+        return;
+      }
+    }
+  }
+  gs.room=key;
+  gs.turns++;
+  onEnter(key);
+}
+
+function onEnter(key){
+  const r=ROOMS[key];
+  // Первое посещение
+  if(!gs.firstDesc.has(key)){
+    gs.firstDesc.add(key);
+    setTimeout(()=>msg(r.desc,5500),600);
+  } else if(r.events?.length && Math.random()<.3){
+    setTimeout(()=>msg(r.events[Math.floor(Math.random()*r.events.length)],4000),800);
+  }
+  updateHUD();
+  updateRoomLight(key);
+  // Морг — специальный текст
+  if(key==='морг' && !gs.visited.has('морг'))
+    setTimeout(()=>msg('☠️ На стене мелом: «ЦИФРЫ — КЛЮЧ. 3-7-2-1». В углу — старый сейф.',5000),3000);
+  gs.visited.add(key);
+  // Активировать тень
+  if(gs.turns>=8 && !gs.entityActive) activateEntity();
+  // Выход
+  if(r.isExit){
+    if(gs.inventory.includes('ключ выхода')) setTimeout(()=>win(),1500);
+    else msg('🔒 Массивная дверь заперта. Нужен ключ выхода.',3500);
+  }
+}
+
+function updateRoomLight(key){
+  const r=ROOMS[key];
+  roomPL.position.set(r.pos[0],RH-0.4,r.pos[1]);
+  roomPL.color.setHex(r.light);
+  roomPL.intensity=gs.generatorOn ? r.li*2 : r.li;
+}
+
+// ═══════════════════════════════════════════
+//  ВЗАИМОДЕЙСТВИЕ
+// ═══════════════════════════════════════════
+function interact(){
+  const px=camera.position.x, pz=camera.position.z;
+  // Поднять предмет поблизости
+  let nearest=null, nd=2.8;
+  for(const e of itemMeshes){
+    if(e.roomKey!==gs.room) continue;
+    const mp=e.mesh.position;
+    const d=Math.sqrt((px-mp.x)**2+(pz-mp.z)**2);
+    if(d<nd){nd=d;nearest=e;}
+  }
+  if(nearest){ pickup(nearest); return; }
+  // Сейф в морге
+  if(gs.room==='морг'){
+    const [mx,mz]=ROOMS['морг'].pos;
+    if(Math.sqrt((px-mx)**2+(pz-mz)**2)<5.5){
+      if(gs.puzzleSolved) msg('🔓 Сейф уже открыт.');
+      else openSafe();
+      return;
+    }
+  }
+  // Генератор
+  if(gs.room==='электрощитовая'){
+    if(gs.generatorOn){ msg('⚡ Генератор уже работает.'); return; }
+    if(gs.inventory.includes('канистра с бензином')) startGenerator();
+    else if(gs.inventory.includes('канистра')&&gs.inventory.includes('бензин'))
+      combine('канистра','бензин','канистра с бензином');
+    else msg('🔧 Генератор требует топлива. Найди канистру с бензином.',3500);
+    return;
+  }
+  // Успокоительное из инвентаря
+  if(gs.inventory.includes('успокоительное')){ useItem('успокоительное'); return; }
+  // Соединить канистру + бензин
+  if(gs.inventory.includes('канистра')&&gs.inventory.includes('бензин')){
+    combine('канистра','бензин','канистра с бензином'); return;
+  }
+  msg('Здесь нечего делать.');
+}
+
+function pickup(entry){
+  const{itemName,roomKey}=entry;
+  gs.inventory.push(itemName);
+  gs.roomItems[roomKey]=(gs.roomItems[roomKey]||[]).filter(i=>i!==itemName);
+  removeItemMesh(itemName,roomKey);
+  const it=ITEMS[itemName];
+  msg(`✅ Подобрано: ${it?.name||itemName}. ${it?.desc||''}`);
+  if(itemName==='фонарик') setTimeout(()=>toggleFlash(true),400);
+  updateHUD();
+  // Авто-соединение
+  if(itemName==='бензин'&&gs.inventory.includes('канистра'))
+    setTimeout(()=>combine('канистра','бензин','канистра с бензином'),300);
+  else if(itemName==='канистра'&&gs.inventory.includes('бензин'))
+    setTimeout(()=>combine('канистра','бензин','канистра с бензином'),300);
+}
+
+function combine(a,b,res){
+  gs.inventory=gs.inventory.filter(i=>i!==a&&i!==b);
+  gs.inventory.push(res);
+  msg(`🔧 Ты соединяешь ${ITEMS[a]?.name} и ${ITEMS[b]?.name} → ${ITEMS[res]?.name}.`);
+  updateHUD();
+}
+
+function useItem(name){
+  const it=ITEMS[name];
+  if(it?.sanity){ gs.sanity=Math.min(100,gs.sanity+it.sanity); msg(`💊 Рассудок восстановлен.`); }
+  if(it?.use) gs.inventory=gs.inventory.filter(i=>i!==name);
+  updateHUD();
+}
+
+function startGenerator(){
+  gs.generatorOn=true;
+  gs.inventory=gs.inventory.filter(i=>i!=='канистра с бензином');
+  msg('⚡ Генератор запущен! По всему подвалу мигнул свет.',4000);
+  ambient.intensity=0.45;
+  updateRoomLight(gs.room);
+  updateHUD();
+}
+
+// ═══════════════════════════════════════════
+//  ФОНАРИК
+// ═══════════════════════════════════════════
+function toggleFlash(forceOn){
+  gs.flashOn = forceOn!==undefined ? forceOn : !gs.flashOn;
+  torch.intensity = gs.flashOn ? 3.2 : 0;
+  document.getElementById('flashlight-icon').textContent = gs.flashOn ? '🔦 включён' : '🔦 выключен';
+  document.getElementById('flashlight-icon').style.color = gs.flashOn ? '#ffdd88' : '#333';
+  if(forceOn===undefined) msg(gs.flashOn ? '🔦 Фонарик включён.' : '🔦 Фонарик выключен.');
+}
+
+// ═══════════════════════════════════════════
+//  СЕЙФ
+// ═══════════════════════════════════════════
+function openSafe(){
+  safeOpen=true; controls.unlock();
+  document.getElementById('safe-modal').style.display='flex';
+  document.getElementById('safe-input').value='';
+  setTimeout(()=>document.getElementById('safe-input').focus(),100);
+}
+function closeSafe(){
+  safeOpen=false;
+  document.getElementById('safe-modal').style.display='none';
+}
+function checkCode(code){
+  if(code==='3721'){
+    gs.puzzleSolved=true; closeSafe();
+    gs.inventory.push('ключ выхода');
+    msg('🔓 Сейф открыт! Внутри — ключ выхода.',5000);
+    updateHUD();
+    gs.sanity=Math.max(0,gs.sanity-5);
+  } else {
+    msg('❌ Неверный код.');
+    const inp=document.getElementById('safe-input');
+    inp.style.borderColor='#cc0000';
+    setTimeout(()=>inp.style.borderColor='#444',800);
+  }
+}
+document.getElementById('safe-ok').addEventListener('click',()=>checkCode(document.getElementById('safe-input').value));
+document.getElementById('safe-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter') checkCode(document.getElementById('safe-input').value);
+  if(e.key==='Escape') closeSafe();
+});
+document.getElementById('safe-esc').addEventListener('click',closeSafe);
+
+// ═══════════════════════════════════════════
+//  СУЩНОСТЬ — ТЕНЬ
+// ═══════════════════════════════════════════
+const SAFE_ROOMS=new Set(['вход','выход']);
+const NEAR_MSGS=['👣 Тяжёлые шаги. Рядом. Очень близко.','💨 Запах гнили нарастает.',
+  '👁️ Тень на стене — там, где нет источника света.','🫁 Нечеловеческий выдох за стеной.'];
+const SCARE_MSGS=['ОНО ЗДЕСЬ','НЕ СМОТРИ НА НЕГО','БЕГИ','ОН ВИДИТ ТЕБЯ'];
+
+function activateEntity(){
+  const cands=Object.keys(ROOMS).filter(r=>!SAFE_ROOMS.has(r)&&r!==gs.room);
+  gs.entityRoom=cands[Math.floor(Math.random()*cands.length)]||'морг';
+  gs.entityActive=true;
+  setTimeout(()=>msg('💀 Где-то в темноте — тяжёлые шаги. Ты не один.',3500),500);
+}
+
+function updateEntity(dt){
+  if(!gs.entityActive) return;
+  gs.entityTimer+=dt;
+  const interval=Math.max(1.5, 4-gs.entityEncounters*.8);
+  if(gs.entityTimer<interval) return;
+  gs.entityTimer=0;
+  const r=ROOMS[gs.entityRoom];
+  if(!r) return;
+  const adj=Object.values(r.exits||{}).filter(x=>x&&!SAFE_ROOMS.has(x));
+  if(!adj.length) return;
+  const toward=adj.filter(x=>{
+    const tr=ROOMS[x]; if(!tr) return false;
+    return Object.values(tr.exits||{}).includes(gs.room)||x===gs.room;
+  });
+  gs.entityRoom=(toward.length&&Math.random()<.55 ? toward:adj)[Math.floor(Math.random()*Math.max(toward.length,adj.length))];
+  if(gs.entityRoom===gs.room){ encounter(); return; }
+  const nowR=ROOMS[gs.entityRoom];
+  if(nowR && Object.values(nowR.exits||{}).includes(gs.room))
+    msg(NEAR_MSGS[Math.floor(Math.random()*NEAR_MSGS.length)],3000);
+  placeShadow();
+}
+
+function encounter(){
+  gs.entityEncounters++;
+  const drain=20+gs.entityEncounters*5;
+  gs.sanity=Math.max(0,gs.sanity-drain);
+  // Джампскер
+  const jel=document.getElementById('jumpscare');
+  jel.textContent=SCARE_MSGS[Math.floor(Math.random()*SCARE_MSGS.length)];
+  jel.style.display='flex';
+  // Звуковой эффект (Web Audio)
+  playScare();
+  setTimeout(()=>jel.style.display='none',700);
+  // Бегство
+  const r=ROOMS[gs.room];
+  const adj=Object.values(r?.exits||{}).filter(x=>x&&x!==gs.entityRoom);
+  const flee=adj.length ? adj[Math.floor(Math.random()*adj.length)] : 'вход';
+  const fr=ROOMS[flee];
+  if(fr) camera.position.set(fr.pos[0],EYE,fr.pos[1]);
+  gs.room=flee;
+  setTimeout(()=>{
+    msg(`Ты в панике вырываешься в ${ROOMS[flee]?.name||flee}.`,3500);
+    updateHUD(); updateRoomLight(flee);
+  },750);
+  if(gs.sanity<=0) setTimeout(()=>die(),1500);
+  updateHUD(); placeShadow();
+}
+
+function placeShadow(){
+  if(!shadowEntity) return;
+  if(!gs.entityActive||!gs.entityRoom||!ROOMS[gs.entityRoom]){
+    shadowEntity.visible=false; return;
+  }
+  const[sx,sz]=ROOMS[gs.entityRoom].pos;
+  shadowEntity.position.set(sx,0,sz);
+  shadowEntity.lookAt(camera.position.x,0,camera.position.z);
+  shadowEntity.visible=true;
+}
+
+// ═══════════════════════════════════════════
+//  РАССУДОК
+// ═══════════════════════════════════════════
+function updateSanity(now){
+  if(now-lastDrain<DRAIN_MS) return;
+  lastDrain=now;
+  const r=ROOMS[gs.room]; if(!r||!r.drain) return;
+  let d=r.drain;
+  if(r.dark&&gs.flashOn) d=Math.ceil(d*.5);
+  if(!gs.generatorOn&&r.dark) d=Math.ceil(d*1.2);
+  gs.sanity=Math.max(0,gs.sanity-d);
+  updateHUD();
+  if(gs.sanity<=0&&!gs.dead) die();
+}
+
+function applySanityFX(){
+  const s=gs.sanity;
+  const fill=document.getElementById('sanity-fill');
+  fill.style.width=s+'%';
+  fill.style.background=s>60?'#00d26a':s>30?'#ccaa00':'#cc2222';
+  // Вьюньет
+  const ig=Math.max(0,(50-s)/50);
+  document.getElementById('vignette').style.background=
+    `radial-gradient(ellipse at center,transparent ${40-ig*20}%,rgba(80,0,0,${ig*.75}) 100%)`;
+  // Дисторция
+  const dist=Math.max(0,(30-s)/30);
+  renderer.domElement.style.filter=dist>0?`hue-rotate(${dist*25}deg) contrast(${1+dist*.4})`:'';
+  // Галлюцинации
+  if(s<30&&Math.random()<.004){
+    const h=['Ты слышишь своё имя. Кто-то шепчет из-за стены.',
+      'В углу кто-то стоит. Потом — ничего.','МЫСЛИ ЧУЖИЕ. ОНИ В ГОЛОВЕ.',
+      'Дверь была закрыта. Теперь открыта. Ты её не открывал.'];
+    msg(h[Math.floor(Math.random()*h.length)],3000);
+  }
+}
+
+// ═══════════════════════════════════════════
+//  ПОБЕДА / ПОРАЖЕНИЕ
+// ═══════════════════════════════════════════
+function win(){
+  gs.won=true; controls.unlock();
+  let t,txt;
+  if(gs.sanity>=60){
+    t='🌅 ПОБЕГ'; txt='Ты вырвался из подвала. Свежий воздух ударяет в лёгкие. Ты жив. Ты в порядке. Почти. Ты никогда не забудешь этого места.';
+    document.getElementById('end-title').style.color='#00d26a';
+  } else if(gs.sanity>=25){
+    t='😰 СЛОМЛЕННЫЙ'; txt='Ты выбрался. Но что-то осталось там, в темноте. Какая-то часть тебя — так и не вышла. Рассудок дал трещину.';
+    document.getElementById('end-title').style.color='#ccaa00';
+  } else {
+    t='🌀 БЕЗУМИЕ'; txt='Ты снаружи. Или думаешь, что снаружи. Стены не исчезли — они просто стали невидимыми. Ты никогда не выбирался.';
+    document.getElementById('end-title').style.color='#cc0000';
+  }
+  document.getElementById('end-title').textContent=t;
+  document.getElementById('end-text').textContent=txt;
+  document.getElementById('endscreen').style.display='flex';
+}
+function die(){
+  gs.dead=true; controls.unlock();
+  document.getElementById('end-title').textContent='💀 БЕЗУМИЕ';
+  document.getElementById('end-title').style.color='#cc0000';
+  document.getElementById('end-text').textContent='Рассудок не выдержал. Тьма поглотила тебя. Ты больше не ты.';
+  document.getElementById('endscreen').style.display='flex';
+}
+
+// ═══════════════════════════════════════════
+//  HUD
+// ═══════════════════════════════════════════
+function updateHUD(){
+  const r=ROOMS[gs.room];
+  document.getElementById('room-name').textContent=(r?.emoji||'')+' '+(r?.name||'');
+  // Инвентарь
+  const panel=document.getElementById('inventory');
+  panel.innerHTML='';
+  for(const name of gs.inventory){
+    const it=ITEMS[name]; if(!it) continue;
+    const sl=document.createElement('div');
+    sl.className='slot'; sl.innerHTML=`${it.emoji}<span class="slot-tip">${it.name}</span>`;
+    sl.style.pointerEvents='auto';
+    if(it.use) sl.addEventListener('click',()=>useItem(name));
+    else sl.addEventListener('click',()=>msg(it.desc||it.name,2500));
+    panel.appendChild(sl);
+  }
+}
+
+function msg(text, dur=2800){
+  const el=document.getElementById('msg');
+  el.textContent=text; el.style.opacity='1';
+  if(msgTimer) clearTimeout(msgTimer);
+  msgTimer=setTimeout(()=>el.style.opacity='0',dur);
+}
+
+function updateInteract(){
+  const px=camera.position.x, pz=camera.position.z;
+  const hint=document.getElementById('interact');
+  let show=false;
+  for(const e of itemMeshes){
+    if(e.roomKey!==gs.room) continue;
+    const mp=e.mesh.position;
+    if(Math.sqrt((px-mp.x)**2+(pz-mp.z)**2)<2.8){show=true;break;}
+  }
+  if(!show&&gs.room==='морг'&&!gs.puzzleSolved) show=true;
+  if(!show&&gs.room==='электрощитовая') show=true;
+  hint.style.display=show?'block':'none';
+}
+
+// ═══════════════════════════════════════════
+//  WEB AUDIO — ЗВУК ДЖАМПСКЕРА
+// ═══════════════════════════════════════════
+let audioCtx=null;
+function initAudio(){
+  if(audioCtx) return;
+  audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+}
+function playScare(){
+  if(!audioCtx) return;
+  const buf=audioCtx.createBuffer(1,audioCtx.sampleRate*.4,audioCtx.sampleRate);
+  const data=buf.getChannelData(0);
+  for(let i=0;i<data.length;i++) data[i]=(Math.random()*2-1)*Math.exp(-i/data.length*3);
+  const src=audioCtx.createBufferSource();
+  src.buffer=buf;
+  const gain=audioCtx.createGain();
+  gain.gain.value=.6;
+  src.connect(gain); gain.connect(audioCtx.destination);
+  src.start();
+}
+
+// ═══════════════════════════════════════════
+//  КОНТРОЛЫ — СТАРТ / ПАУЗА
+// ═══════════════════════════════════════════
+document.getElementById('start-btn').addEventListener('click',()=>{
+  initAudio();
+  document.getElementById('overlay').style.display='none';
+  controls.lock();
+  buildDungeon();
+  updateHUD();
+  updateRoomLight('вход');
+  setTimeout(()=>msg(ROOMS['вход'].desc,5500),600);
+});
+
+controls.addEventListener('lock',()=>{
+  paused=false;
+  document.getElementById('pause-hint').style.display='none';
+});
+controls.addEventListener('unlock',()=>{
+  if(!safeOpen&&!gs.won&&!gs.dead){
+    paused=true;
+    document.getElementById('pause-hint').style.display='flex';
+  }
+});
+document.getElementById('resume-btn').addEventListener('click',()=>controls.lock());
+
+// ═══════════════════════════════════════════
+//  АНИМАЦИЯ
+// ═══════════════════════════════════════════
+const clock=new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),.1);
+  const now=performance.now();
+  if(!paused&&!gs.won&&!gs.dead){
+    handleMovement(dt);
+    updateSanity(now);
+    applySanityFX();
+    updateEntity(dt);
+    updateInteract();
+  }
+  // Анимация предметов
+  for(const e of itemMeshes){
+    const t=now*.001;
+    e.mesh.position.y=.45+Math.sin(t*2+e.mesh.position.x)*.08;
+    e.mesh.rotation.y+=dt*1.3;
+    e.light.position.copy(e.mesh.position);
+  }
+  // Мигание ламп
+  for(const pl of staticLights){
+    const t=now*.001;
+    pl.intensity=pl.userData.base*(0.82+0.18*Math.sin(t*7+pl.userData.phase));
+  }
+  // Покачивание тени
+  if(shadowEntity?.visible){
+    shadowEntity.position.y=Math.sin(now*.003)*.12;
+  }
+  renderer.render(scene,camera);
+}
+
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+animate();
+</script>
+</body>
+</html>
