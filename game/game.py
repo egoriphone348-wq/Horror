@@ -134,6 +134,159 @@ def hallucination_message(sanity):
         whisper(random.choice(msgs))
         print()
 
+# ─── СИСТЕМА БЛУЖДАЮЩЕЙ СУЩНОСТИ ──────────────────────────────
+
+# Комнаты, куда Тень никогда не заходит
+ENTITY_SAFE_ROOMS = {"вход", "выход"}
+
+# Ходы предупреждения перед появлением сущности
+ENTITY_ACTIVATE_TURN = 8
+
+# Звуки приближения Тени (слышны когда она в соседней комнате)
+ENTITY_NEAR_SOUNDS = [
+    "Где-то рядом — тяжёлые, медленные шаги. Не человеческие.",
+    "Тихий скрежет по стене. Близко. Очень близко.",
+    "Ты чувствуешь запах — гниль и что-то сладковатое. Он нарастает.",
+    "Из-за стены слышен долгий выдох. Нечеловеческий.",
+    "Что-то касается двери с той стороны. Один раз. Два. Три.",
+    "Тень пробегает по стене — там, где нет источника света.",
+]
+
+# Тексты встречи (Тень в той же комнате)
+ENTITY_ENCOUNTER_SCARES = [
+    "ОНО ЗДЕСЬ",
+    "НЕ СМОТРИ НА НЕГО",
+    "БЕГИ",
+    "ОН ВИДИТ ТЕБЯ",
+]
+
+ENTITY_ENCOUNTER_TEXTS = [
+    (
+        "Из темноты появляется фигура. Высокая — слишком высокая. "
+        "Без лица. Без звука. Она просто стоит и смотрит туда, где твоё лицо должно быть. "
+        "Ноги отказывают. Ты разворачиваешься и бежишь."
+    ),
+    (
+        "Ты чувствуешь его раньше, чем видишь — холод охватывает тебя, как вода. "
+        "Потом оно поворачивается. У него нет глаз. Но оно видит тебя. "
+        "Ты бежишь. Ты не помнишь, как оказался в другой комнате."
+    ),
+    (
+        "Кто-то стоит в углу. Спиной к тебе. Слишком неподвижно. "
+        "Потом голова медленно поворачивается — неестественно, слишком далеко. "
+        "Ты видишь не лицо. Просто темноту. И ты бежишь."
+    ),
+    (
+        "Лампа мигает. В миг темноты — оно рядом. В миг света — "
+        "пусто, но твоё плечо горит там, где оно коснулось. "
+        "Ты уже на бегу, не понимая когда начал."
+    ),
+]
+
+def entity_adjacent_rooms(room_name):
+    """Возвращает список комнат, смежных с данной."""
+    return list(ROOMS[room_name]["exits"].values())
+
+def move_entity(state):
+    """Перемещает Тень по подвалу каждые N ходов."""
+    wander_rooms = [r for r in ROOMS if r not in ENTITY_SAFE_ROOMS]
+    if not state.entity_active:
+        if state.turns >= ENTITY_ACTIVATE_TURN:
+            # Активируем — спавним в случайной комнате, подальше от игрока
+            candidates = [
+                r for r in wander_rooms
+                if r != state.current_room
+                and r not in entity_adjacent_rooms(state.current_room)
+            ]
+            if not candidates:
+                candidates = [r for r in wander_rooms if r != state.current_room]
+            state.entity_room = random.choice(candidates) if candidates else "морг"
+            state.entity_active = True
+        return
+
+    state.entity_move_counter += 1
+    # Интервал движения уменьшается с каждой встречей (становится быстрее)
+    interval = max(2, 4 - state.entity_encounters)
+    if state.entity_move_counter < interval:
+        return
+    state.entity_move_counter = 0
+
+    # Выбираем следующую комнату для Тени
+    current = state.entity_room
+    adjacent = [
+        r for r in entity_adjacent_rooms(current)
+        if r not in ENTITY_SAFE_ROOMS
+    ]
+    if not adjacent:
+        return
+
+    # Тень тяготеет к игроку: с вероятностью 55% движется в сторону игрока
+    player_room = state.current_room
+    toward_player = [r for r in adjacent if player_room in entity_adjacent_rooms(r) or r == player_room]
+
+    if toward_player and random.random() < 0.55:
+        state.entity_room = random.choice(toward_player)
+    else:
+        state.entity_room = random.choice(adjacent)
+
+def entity_proximity(state):
+    """Возвращает: 'here' | 'near' | 'far'"""
+    if not state.entity_active or not state.entity_room:
+        return "far"
+    if state.entity_room == state.current_room:
+        return "here"
+    if state.entity_room in entity_adjacent_rooms(state.current_room):
+        return "near"
+    return "far"
+
+def check_entity_encounter(state):
+    """Проверяет встречу с Тенью и обрабатывает её."""
+    if entity_proximity(state) != "here":
+        return
+
+    # Встреча!
+    time.sleep(0.3)
+    scare_text = random.choice(ENTITY_ENCOUNTER_SCARES)
+    encounter_text = random.choice(ENTITY_ENCOUNTER_TEXTS)
+
+    jumpscare(scare_text)
+
+    spooky(encounter_text)
+    time.sleep(0.8)
+
+    # Потеря рассудка зависит от того, сколько уже было встреч
+    drain = 20 + state.entity_encounters * 5
+    state.drain_sanity(drain)
+    state.entity_encounters += 1
+
+    # Принудительное бегство: переносим игрока в случайную смежную комнату
+    adjacent = entity_adjacent_rooms(state.current_room)
+    safe_adjacent = [r for r in adjacent if r != state.entity_room]
+    if safe_adjacent:
+        flee_room = random.choice(safe_adjacent)
+    elif adjacent:
+        flee_room = random.choice(adjacent)
+    else:
+        flee_room = "вход"
+
+    print()
+    spooky(f"Ты в панике вырываешься в {ROOMS[flee_room]['name']}.")
+    time.sleep(0.5)
+
+    state.current_room = flee_room
+    state.turns += 1
+
+    # Тень остаётся там, где была встреча, потом случайно уходит
+    adj_entity = [
+        r for r in entity_adjacent_rooms(state.entity_room)
+        if r not in ENTITY_SAFE_ROOMS and r != flee_room
+    ]
+    if adj_entity:
+        state.entity_room = random.choice(adj_entity)
+
+    print()
+    input(C.GRAY + "  [нажмите Enter, чтобы прийти в себя...]" + C.RESET)
+
 # ─── ПРЕДМЕТЫ ─────────────────────────────────────────────────
 
 ITEMS = {
@@ -585,6 +738,11 @@ class GameState:
         self.events_seen    = {k: [] for k in ROOMS}
         self.puzzle_solved  = False
         self.locked_rooms_opened = []
+        # Сущность («Тень»)
+        self.entity_active        = False
+        self.entity_room          = None
+        self.entity_move_counter  = 0
+        self.entity_encounters    = 0
 
     def drain_sanity(self, amount):
         if self.has_flashlight:
@@ -622,6 +780,10 @@ class GameState:
             "won": self.won,
             "puzzle_solved": self.puzzle_solved,
             "locked_rooms_opened": self.locked_rooms_opened,
+            "entity_active": self.entity_active,
+            "entity_room": self.entity_room,
+            "entity_move_counter": self.entity_move_counter,
+            "entity_encounters": self.entity_encounters,
         }
 
     @classmethod
@@ -640,6 +802,10 @@ class GameState:
         s.won            = d.get("won", False)
         s.puzzle_solved  = d.get("puzzle_solved", False)
         s.locked_rooms_opened = d.get("locked_rooms_opened", [])
+        s.entity_active       = d.get("entity_active", False)
+        s.entity_room         = d.get("entity_room", None)
+        s.entity_move_counter = d.get("entity_move_counter", 0)
+        s.entity_encounters   = d.get("entity_encounters", 0)
         return s
 
 # ─── СОХРАНЕНИЕ / ЗАГРУЗКА ────────────────────────────────────
@@ -686,10 +852,19 @@ def show_hud(state):
 
     dark_str = (C.GRAY + " 🌑 ТЕМНО" + C.RESET) if (room.get("dark") and not state.has_flashlight) else ""
 
+    # Индикатор близости Тени
+    proximity = entity_proximity(state)
+    if proximity == "here":
+        entity_str = C.RED + C.BLINK + "  👁 ОНО ЗДЕСЬ" + C.RESET
+    elif proximity == "near":
+        entity_str = C.L_RED + "  ⚠ ЧТО-ТО РЯДОМ" + C.RESET
+    else:
+        entity_str = ""
+
     hr("─")
     print(
         C.CYAN + f"  {room['emoji']} {room['name']}" + C.RESET +
-        dark_str
+        dark_str + entity_str
     )
     print(
         C.GRAY + "  Рассудок: " + C.RESET +
@@ -730,7 +905,13 @@ def show_room(state):
         items_str = ", ".join([f"{ITEMS[i]['emoji']} {i}" for i in available_items if i in ITEMS])
         print(C.YELLOW + "  Видно: " + C.RESET + items_str)
 
-    # Случайное событие
+    # Звук приближения Тени (если в соседней комнате)
+    if entity_proximity(state) == "near" and random.random() < 0.75:
+        print()
+        sound(random.choice(ENTITY_NEAR_SOUNDS))
+        state.drain_sanity(2)
+
+    # Случайное событие комнаты
     events = room.get("events", [])
     seen = state.events_seen.get(state.current_room, [])
     unseen = [e for e in events if e not in seen]
@@ -1405,6 +1586,10 @@ def game_loop(state):
         # Если загружена новая игра
         if isinstance(result, GameState):
             state = result
+
+        # Тень движется и проверяет встречу
+        move_entity(state)
+        check_entity_encounter(state)
 
         clear()
         show_hud(state)
