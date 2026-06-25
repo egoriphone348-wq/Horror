@@ -123,6 +123,17 @@ canvas{display:block}
 }
 #end-btn:hover{border-color:#888;color:#ccc}
 
+/* ─── МИНИ-КАРТА ─── */
+#minimap-wrap{
+  position:fixed;bottom:18px;right:20px;z-index:50;
+  display:none;flex-direction:column;align-items:flex-end;gap:3px;
+}
+#minimap-label{font-size:.6em;color:#333;letter-spacing:2px;text-align:right}
+#minimap{
+  border:1px solid #252525;border-radius:3px;
+  image-rendering:pixelated;
+}
+
 /* ─── ПАУЗА ─── */
 #pause-hint{
   position:fixed;inset:0;display:none;align-items:center;justify-content:center;
@@ -187,6 +198,12 @@ canvas{display:block}
   <div id="end-title"></div>
   <div id="end-text"></div>
   <button id="end-btn" onclick="location.reload()">Играть снова</button>
+</div>
+
+<!-- МИНИ-КАРТА -->
+<div id="minimap-wrap">
+  <div id="minimap-label">КАРТА</div>
+  <canvas id="minimap" width="148" height="192"></canvas>
 </div>
 
 <!-- ПАУЗА -->
@@ -358,7 +375,7 @@ const gs = {
   inventory: [],
   sanity: 100,
   turns: 0,
-  flashOn: false,
+  flashOn: true,
   generatorOn: false,
   puzzleSolved: false,
   unlocked: new Set(),
@@ -1095,6 +1112,113 @@ function playScare(){
 }
 
 // ═══════════════════════════════════════════
+//  МИНИ-КАРТА
+// ═══════════════════════════════════════════
+const _mmCanvas = document.getElementById('minimap');
+const _mmCtx    = _mmCanvas.getContext('2d');
+const MM_W = _mmCanvas.width, MM_H = _mmCanvas.height;
+
+// Границы мирового пространства (по координатам комнат)
+const _WX0=-8, _WX1=68, _WZ0=-68, _WZ1=48;
+const _WXR=_WX1-_WX0, _WZR=_WZ1-_WZ0;
+const _PAD=8;
+const _SCX=(_WXR>0)?((MM_W-_PAD*2)/_WXR):1;
+const _SCZ=(_WZR>0)?((MM_H-_PAD*2)/_WZR):1;
+const _SC = Math.min(_SCX,_SCZ);
+const _OX = _PAD+((MM_W-_PAD*2)-_WXR*_SC)/2;
+const _OZ = _PAD+((MM_H-_PAD*2)-_WZR*_SC)/2;
+
+function _w2m(wx,wz){
+  return [(wx-_WX0)*_SC+_OX, (wz-_WZ0)*_SC+_OZ];
+}
+
+// Список соседних пар для рисования коридоров на карте
+const _CONNECTIONS=[];
+(()=>{
+  const seen=new Set();
+  for(const[k,r] of Object.entries(ROOMS)){
+    for(const nb of Object.values(r.exits||{})){
+      if(!nb) continue;
+      const id=[k,nb].sort().join('|');
+      if(!seen.has(id)){ seen.add(id); _CONNECTIONS.push([k,nb]); }
+    }
+  }
+})();
+
+function drawMinimap(){
+  if(!gameActive) return;
+  _mmCtx.clearRect(0,0,MM_W,MM_H);
+
+  // Фон
+  _mmCtx.fillStyle='rgba(0,0,0,0.82)';
+  _mmCtx.fillRect(0,0,MM_W,MM_H);
+
+  // Коридоры (линии между соседними комнатами)
+  for(const[a,b] of _CONNECTIONS){
+    const ra=ROOMS[a], rb=ROOMS[b];
+    const va=gs.visited.has(a)||gs.room===a;
+    const vb=gs.visited.has(b)||gs.room===b;
+    if(!va&&!vb) continue;
+    const[ax,az]=_w2m(ra.pos[0],ra.pos[1]);
+    const[bx,bz]=_w2m(rb.pos[0],rb.pos[1]);
+    _mmCtx.beginPath();
+    _mmCtx.moveTo(ax,az); _mmCtx.lineTo(bx,bz);
+    _mmCtx.strokeStyle=(va&&vb)?'#2a2a2a':'#1a1a1a';
+    _mmCtx.lineWidth=3;
+    _mmCtx.stroke();
+  }
+
+  // Комнаты
+  const RS=7; // полуразмер квадрата
+  for(const[k,r] of Object.entries(ROOMS)){
+    const[mx,mz]=_w2m(r.pos[0],r.pos[1]);
+    const isCur  = gs.room===k;
+    const visited= gs.visited.has(k);
+
+    if(isCur){
+      _mmCtx.fillStyle='#0d2e12';
+      _mmCtx.strokeStyle='#00d26a';
+      _mmCtx.lineWidth=1.5;
+    } else if(visited){
+      _mmCtx.fillStyle='#161616';
+      _mmCtx.strokeStyle='#333';
+      _mmCtx.lineWidth=1;
+    } else {
+      continue; // невизитованные — не показываем
+    }
+
+    _mmCtx.fillRect(mx-RS,mz-RS,RS*2,RS*2);
+    _mmCtx.strokeRect(mx-RS,mz-RS,RS*2,RS*2);
+
+    // Эмодзи / значок
+    _mmCtx.font=`${RS*1.1}px serif`;
+    _mmCtx.textAlign='center';
+    _mmCtx.textBaseline='middle';
+    _mmCtx.globalAlpha=isCur?0.9:0.55;
+    _mmCtx.fillStyle='#fff';
+    _mmCtx.fillText(r.emoji,mx,mz);
+    _mmCtx.globalAlpha=1;
+  }
+
+  // Игрок (зелёная точка)
+  const[px,pz]=_w2m(camera.position.x,camera.position.z);
+  _mmCtx.beginPath();
+  _mmCtx.arc(px,pz,3.5,0,Math.PI*2);
+  _mmCtx.fillStyle='#00ff66';
+  _mmCtx.fill();
+
+  // Тень — красная точка, если активна
+  if(gs.entityActive&&gs.entityRoom&&ROOMS[gs.entityRoom]){
+    const er=ROOMS[gs.entityRoom];
+    const[ex,ez]=_w2m(er.pos[0],er.pos[1]);
+    _mmCtx.beginPath();
+    _mmCtx.arc(ex,ez,3.5,0,Math.PI*2);
+    _mmCtx.fillStyle='#ff2200';
+    _mmCtx.fill();
+  }
+}
+
+// ═══════════════════════════════════════════
 //  КОНТРОЛЫ — СТАРТ / ПАУЗА
 // ═══════════════════════════════════════════
 function resumeGame(){
@@ -1107,8 +1231,14 @@ document.getElementById('start-btn').addEventListener('click',()=>{
   initAudio();
   document.getElementById('overlay').style.display='none';
   buildDungeon();
+  gs.visited.add('вход');
+  // Фонарик включён с самого начала
+  torch.intensity = gs.flashOn ? 3.2 : 0;
+  document.getElementById('flashlight-icon').textContent = '🔦 включён';
+  document.getElementById('flashlight-icon').style.color = '#ffdd88';
   updateHUD();
   updateRoomLight('вход');
+  document.getElementById('minimap-wrap').style.display='flex';
   gameActive=true;
   paused=false;
   lockPointer();
@@ -1149,6 +1279,7 @@ function animate(){
     shadowEntity.position.y=Math.sin(now*.003)*.12;
   }
   renderer.render(scene,camera);
+  drawMinimap();
 }
 
 window.addEventListener('resize',()=>{
