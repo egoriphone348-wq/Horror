@@ -1,36 +1,42 @@
-# [Project name]
+# Подвал Безумия
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Текстовая хоррор-игра на Python — побег из подвала заброшенной психиатрической больницы.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `python3 game/game.py` — запустить игру (или через workflow «Подвал Безумия»)
+- Сохранения хранятся в `game/save.json`
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Чистый Python 3, без внешних зависимостей
+- ANSI-цвета, рамки, эффекты — через escape-коды
+- Сохранение прогресса — JSON
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `game/game.py` — весь исходный код игры
+- `game/save.json` — файл сохранения (создаётся автоматически)
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Все комнаты, предметы и квесты описаны словарями (`ROOMS`, `ITEMS`, `QUESTS`) — легко расширять
+- Класс `GameState` хранит всё игровое состояние; методы `to_dict`/`from_dict` для сериализации
+- Рассудок (Sanity) влияет на искажение текста, джампскеры и итоговую концовку
+- Три концовки: «Побег» (sanity ≥ 60), «Сломленный» (sanity 25-59), «Безумие» (sanity < 25)
+- Тёмные комнаты с фонариком теряют меньше рассудка
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+**10 локаций:** Вход → Коридор А → Палата №7, Процедурная, Коридор Б, Электрощитовая, Склад медикаментов, Морг, Изолятор, Кабинет главврача, Выход
+
+**4 линейных квеста:**
+1. Найти ржавый ключ (Палата №7)
+2. Запустить генератор (Электрощитовая — нужна канистра + бензин)
+3. Решить головоломку сейфа в Морге (код 3-7-2-1)
+4. Найти ключ выхода (из сейфа) и выбраться
+
+**Механики:** инвентарь, объединение предметов, рассудок, галлюцинации, джампскеры, 3 концовки, сохранение/загрузка
 
 ## User preferences
 
@@ -38,7 +44,10 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Код от сейфа: 3-7-2-1 (из записки главврача + надписи на стене морга)
+- Кабинет главврача открывается железным прутом (из Коридора Б), используемым в Изоляторе
+- Морг доступен только после использования ржавого ключа в Коридоре А/Б
+- Фонарик нужно явно включить командой «использовать фонарик»
 
 ## Pointers
 
