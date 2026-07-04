@@ -1123,6 +1123,10 @@ function handleMovement(dt){
 
   const moving = Math.abs(vel.x)>0.05||Math.abs(vel.z)>0.05;
   if(moving) walkCycle+=dt*7.5; else walkCycle*=0.9;
+  if(moving){
+    playerStepAccum+=dt;
+    if(playerStepAccum>=0.34){ playerStepAccum=0; playFootstep('player'); }
+  } else playerStepAccum=0;
 
   // Считаем смещение и применяем по осям отдельно, чтобы скольжение вдоль стен работало корректно
   _fwdScratch.set(Math.sin(yaw),0,Math.cos(yaw)).negate();
@@ -1262,6 +1266,7 @@ function pickup(entry){
   gs.roomItems[roomKey]=(gs.roomItems[roomKey]||[]).filter(i=>i!==itemName);
   removeItemMesh(itemName,roomKey);
   const it=ITEMS[itemName];
+  playPickup();
   msg(`✅ Подобрано: ${it?.name||itemName}. ${it?.desc||''}`);
   if(itemName==='фонарик') setTimeout(()=>toggleFlash(true),400);
   updateHUD();
@@ -1359,6 +1364,23 @@ let shakeTime=0, shakeMag=0;
 let reviving=false, reviveT=0, reviveLightTarget=0;
 let monsterLight=null;
 
+// ── Погоня / зрение / телепортация ──
+let monsterState='patrol';      // 'patrol' | 'chase' | 'hidden'
+const CHASE_SPEED_MULT=2.35;    // во время погони монстр намного быстрее
+const VISION_RANGE=15;          // дальность зрения монстра
+const VISION_ANGLE=Math.PI*0.42; // половина угла конуса зрения (~75°)
+const LOSE_RANGE=22;            // если игрок дальше — монстр теряет след
+let visionCheckTimer=0;
+let chaseScreamCooldown=0;
+let chaseMinTimer=0;            // минимальное время погони до случайного скримера/потери следа
+let loseSightTimer=0;
+let teleportCooldown=2.5;       // задержка перед первой возможной телепортацией
+let teleportHideTimer=0;
+const monsterFacing=new THREE.Vector2(0,1);
+let monsterStepTimer=0;
+let playerStepAccum=0;
+let lastScreamerCheck=0;
+
 function activateEntity(){
   const cands=Object.keys(ROOMS).filter(r=>!SAFE_ROOMS.has(r)&&r!==gs.room);
   gs.entityRoom=cands[Math.floor(Math.random()*cands.length)]||'морг';
@@ -1388,14 +1410,141 @@ function pickNextMonsterRoom(){
   monsterWaitTimer = Math.random()<0.4 ? 1.2+Math.random()*2.2 : 0;
 }
 
+// Проверяет, есть ли прямая видимость между двумя точками (без стен между ними)
+function hasLineOfSight(x1,z1,x2,z2){
+  const dx=x2-x1, dz=z2-z1;
+  const dist=Math.sqrt(dx*dx+dz*dz)||0.0001;
+  const steps=Math.max(2,Math.ceil(dist/0.9));
+  for(let i=1;i<steps;i++){
+    const t=i/steps;
+    const px=x1+dx*t, pz=z1+dz*t;
+    for(const c of wallColliders){
+      if(px>c.x-c.hx&&px<c.x+c.hx&&pz>c.z-c.hz&&pz<c.z+c.hz) return false;
+    }
+  }
+  return true;
+}
+
+// Проверяет, видит ли монстр игрока (дистанция + конус зрения + прямая видимость)
+function canMonsterSeePlayer(){
+  const dx=camera.position.x-monsterPos.x, dz=camera.position.z-monsterPos.z;
+  const dist=Math.sqrt(dx*dx+dz*dz);
+  if(dist>VISION_RANGE) return false;
+  if(dist>0.6){
+    const nx=dx/dist, nz=dz/dist;
+    const dot=nx*monsterFacing.x+nz*monsterFacing.y;
+    const cosHalf=Math.cos(VISION_ANGLE);
+    if(dot<cosHalf && dist>2.2) return false; // вблизи угол зрения не важен
+  }
+  return hasLineOfSight(monsterPos.x,monsterPos.z,camera.position.x,camera.position.z);
+}
+
+function startChase(){
+  if(monsterState==='chase') return;
+  monsterState='chase';
+  chaseMinTimer=1.6;
+  loseSightTimer=0;
+  teleportCooldown=3+Math.random()*2;
+  chaseScreamCooldown=0;
+  msg('😱 ОН ТЕБЯ УВИДЕЛ! БЕГИ!',3000);
+}
+
+function stopChase(){
+  monsterState='patrol';
+  monsterWaitTimer=0.3;
+  gs.entityGrace=Math.max(gs.entityGrace,1.5);
+}
+
 function updateEntity(dt){
   if(!gs.entityActive||jumpscareActive) return;
   if(gs.entityGrace>0){ gs.entityGrace-=dt; if(shadowEntity) shadowEntity.visible=false; return; }
+
+  // Монстр временно "исчез" во время телепортации в погоне
+  if(monsterState==='hidden'){
+    teleportHideTimer-=dt;
+    if(shadowEntity) shadowEntity.visible=false;
+    if(teleportHideTimer<=0){
+      // Появляется впереди или сбоку от игрока
+      const ang=(Math.random()<0.5?1:-1)*(0.5+Math.random()*0.9); // угол смещения от направления взгляда игрока
+      const fwd=new THREE.Vector2(Math.sin(yaw),Math.cos(yaw));
+      const side=new THREE.Vector2(-fwd.y,fwd.x);
+      const distAhead=6+Math.random()*4;
+      const mix=Math.cos(ang), smix=Math.sin(ang);
+      const nx=camera.position.x + (fwd.x*mix + side.x*smix)*distAhead;
+      const nz=camera.position.z + (fwd.y*mix + side.y*smix)*distAhead;
+      monsterPos.set(nx,0,nz);
+      monsterState='chase';
+      chaseMinTimer=1.2;
+      playScreech();
+      msg('👹 ОНО ПОЯВИЛОСЬ РЯДОМ!',2500);
+    }
+    return;
+  }
+
+  visionCheckTimer-=dt;
+  if(visionCheckTimer<=0){
+    visionCheckTimer=0.28;
+    if(monsterState==='patrol' && canMonsterSeePlayer()) startChase();
+  }
+
+  if(monsterState==='chase'){
+    chaseMinTimer=Math.max(0,chaseMinTimer-dt);
+    const dx=camera.position.x-monsterPos.x, dz=camera.position.z-monsterPos.z;
+    const dist=Math.sqrt(dx*dx+dz*dz)||0.0001;
+    monsterFacing.set(dx/dist,dz/dist);
+    const speed=MONSTER_SPEED*CHASE_SPEED_MULT*(1+gs.entityEncounters*0.06);
+    const step=Math.min(speed*dt,dist-1.1);
+    if(step>0){ monsterPos.x+=dx/dist*step; monsterPos.z+=dz/dist*step; }
+
+    // Крик "ОСТАНОВИСЬ!" во время погони
+    chaseScreamCooldown-=dt;
+    if(chaseScreamCooldown<=0){
+      chaseScreamCooldown=3.5+Math.random()*2.5;
+      screamStop();
+    }
+
+    // Шаги монстра (тяжёлые, быстрые)
+    monsterStepTimer-=dt;
+    if(monsterStepTimer<=0){
+      monsterStepTimer=0.24;
+      playFootstep('monster-run',dist);
+    }
+
+    // Потеря видимости — если игрок долго вне поля зрения и далеко, погоня прекращается
+    if(!canMonsterSeePlayer()){
+      loseSightTimer+=dt;
+      if(loseSightTimer>4 && dist>LOSE_RANGE*0.4) stopChase();
+    } else loseSightTimer=0;
+    if(dist>LOSE_RANGE) stopChase();
+
+    // Случайное исчезновение во время бега (эффект телепортации)
+    teleportCooldown-=dt;
+    if(chaseMinTimer<=0 && teleportCooldown<=0 && dist>4){
+      teleportCooldown=5+Math.random()*4;
+      monsterState='hidden';
+      teleportHideTimer=1+Math.random()*2;
+      if(shadowEntity) shadowEntity.visible=false;
+      return;
+    }
+
+    placeShadow();
+    if(dist<1.9){ encounter(); return; }
+
+    // Супер внезапный screamer — небольшой шанс атаки даже не вплотную, когда погоня уже идёт
+    if(chaseMinTimer<=0 && dist<6.5){
+      const chance=(6.5-dist)/6.5*0.02;
+      if(Math.random()<chance){ encounter(); return; }
+    }
+    return;
+  }
+
+  // ── Патрулирование (как раньше) ──
   const r=ROOMS[gs.entityRoom];
   if(!r) return;
   const tx=r.pos[0], tz=r.pos[1];
   const dx=tx-monsterPos.x, dz=tz-monsterPos.z;
   const dist=Math.sqrt(dx*dx+dz*dz);
+  if(dist>0.05){ monsterFacing.set(dx/dist,dz/dist); }
   if(monsterWaitTimer>0){
     monsterWaitTimer-=dt;
   } else if(dist>0.35){
@@ -1403,6 +1552,12 @@ function updateEntity(dt){
     const step=Math.min(speed*dt,dist);
     monsterPos.x+=dx/dist*step;
     monsterPos.z+=dz/dist*step;
+    monsterStepTimer-=dt;
+    if(monsterStepTimer<=0){
+      monsterStepTimer=0.55;
+      const pdx0=camera.position.x-monsterPos.x, pdz0=camera.position.z-monsterPos.z;
+      playFootstep('monster-walk',Math.sqrt(pdx0*pdx0+pdz0*pdz0));
+    }
   } else {
     pickNextMonsterRoom();
   }
@@ -1485,6 +1640,9 @@ function respawnPlayer(){
   const fr=ROOMS[gs.entityRoom];
   if(fr) monsterPos.set(fr.pos[0],0,fr.pos[1]);
   gs.entityGrace=8;
+  monsterState='patrol';
+  chaseMinTimer=0; loseSightTimer=0; teleportCooldown=6;
+  if(window.speechSynthesis) speechSynthesis.cancel();
   gs.visited.add('вход');
   updateHUD();
   // Свет комнаты выключен на момент обморока — включится постепенно с мерцанием в updateRevive
@@ -1675,6 +1833,86 @@ function playScare(){
   gGain.gain.linearRampToValueAtTime(0.0001,t0+0.55);
   growl.connect(gGain); gGain.connect(master);
   growl.start(t0); growl.stop(t0+0.6);
+}
+
+// Крик монстра «ОСТАНОВИСЬ!» во время погони — синтез речи с искажённым, демоническим тоном
+let ruVoice=null;
+function pickRuVoice(){
+  if(!window.speechSynthesis) return null;
+  const voices=speechSynthesis.getVoices();
+  return voices.find(v=>v.lang&&v.lang.toLowerCase().startsWith('ru'))||voices[0]||null;
+}
+if(window.speechSynthesis){
+  speechSynthesis.onvoiceschanged=()=>{ ruVoice=pickRuVoice(); };
+  ruVoice=pickRuVoice();
+}
+function screamStop(){
+  playScreech();
+  if(!window.speechSynthesis) return;
+  try{
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance('ОСТАНОВИСЬ!');
+    u.lang='ru-RU';
+    u.pitch=0.15;
+    u.rate=0.78;
+    u.volume=1.0;
+    if(ruVoice) u.voice=ruVoice;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+// Короткий пронзительный визг/скрежет (используется при телепортации монстра)
+function playScreech(){
+  if(!audioCtx) return;
+  const t0=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator();
+  osc.type='sawtooth';
+  osc.frequency.setValueAtTime(1800,t0);
+  osc.frequency.exponentialRampToValueAtTime(300,t0+0.35);
+  const g=audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(0.7,t0+0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.4);
+  osc.connect(g); g.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0+0.42);
+}
+
+// Шаги — игрока и монстра (разные для ходьбы/бега), громкость монстра зависит от дистанции до игрока
+function playFootstep(kind,dist=5){
+  if(!audioCtx) return;
+  const t0=audioCtx.currentTime;
+  const dur = kind==='player' ? 0.11 : (kind==='monster-run'?0.16:0.14);
+  const buf=audioCtx.createBuffer(1,audioCtx.sampleRate*dur,audioCtx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/d.length*6);
+  const src=audioCtx.createBufferSource();
+  src.buffer=buf;
+  const filt=audioCtx.createBiquadFilter();
+  filt.type='lowpass';
+  filt.frequency.value = kind==='player' ? 900 : (kind==='monster-run'?260:320);
+  const gain=audioCtx.createGain();
+  let vol;
+  if(kind==='player') vol=0.22;
+  else { const distFactor=Math.max(0,1-dist/18); vol=(kind==='monster-run'?0.9:0.55)*distFactor+0.05; }
+  gain.gain.value=vol;
+  src.connect(filt); filt.connect(gain); gain.connect(audioCtx.destination);
+  src.start(t0);
+}
+
+// Звук подбора предмета — чёткий короткий "плинк"
+function playPickup(){
+  if(!audioCtx) return;
+  const t0=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator();
+  osc.type='sine';
+  osc.frequency.setValueAtTime(520,t0);
+  osc.frequency.exponentialRampToValueAtTime(980,t0+0.12);
+  const g=audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(0.45,t0+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.28);
+  osc.connect(g); g.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0+0.3);
 }
 
 // ═══════════════════════════════════════════
