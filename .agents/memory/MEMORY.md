@@ -1,0 +1,1 @@
+- [Three.js single-file game structure](threejs-single-file-game.md) — game3d.html is one big ES module; collision/monster-AI/jumpscare logic must stay consistency-checked with `node --check` after edits.

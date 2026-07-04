@@ -50,6 +50,7 @@ canvas{display:block}
   transition:border-color .2s;
 }
 .slot:hover{border-color:#555}
+.slot.held{border-color:#ffcc55;box-shadow:0 0 8px rgba(255,204,85,.6)}
 .slot-tip{
   position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
   background:#111;border:1px solid #333;padding:4px 10px;white-space:nowrap;
@@ -85,6 +86,14 @@ canvas{display:block}
   position:fixed;inset:0;background:#cc0000;
   display:none;align-items:center;justify-content:center;z-index:200;
   font-size:4.5em;font-weight:bold;color:#fff;text-shadow:0 0 30px #000;letter-spacing:4px;
+}
+#faint-overlay{
+  position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:210;
+}
+#wake-blur{
+  position:fixed;inset:0;pointer-events:none;z-index:48;
+  backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);
+  background:rgba(0,0,0,0);
 }
 
 /* ─── СЕЙФ ─── */
@@ -226,6 +235,8 @@ canvas{display:block}
 
 <div id="vignette"></div>
 <div id="jumpscare"></div>
+<div id="wake-blur"></div>
+<div id="faint-overlay"></div>
 
 <!-- СЕЙФ -->
 <div id="safe-modal">
@@ -300,6 +311,8 @@ const WT     = 0.25; // толщина стены
 const EYE    = 1.65; // высота глаз игрока
 const SPEED  = 5.5;  // скорость движения
 const DRAIN_MS = 3500; // мс между тиками рассудка
+const PLAYER_R = 0.34; // радиус коллизии игрока
+const MONSTER_SPEED = 2.1; // скорость ходьбы монстра (units/sec)
 
 // ═══════════════════════════════════════════
 //  ОПИСАНИЕ КОМНАТ
@@ -442,7 +455,8 @@ const gs = {
   unlocked: new Set(),
   won: false, dead: false,
   entityRoom: null, entityActive: false,
-  entityTimer: 0, entityEncounters: 0,
+  entityTimer: 0, entityEncounters: 0, entityGrace: 0,
+  heldItem: null,
   roomItems: {},     // key → [item,...]
   visited: new Set(),
   firstDesc: new Set(),
@@ -507,14 +521,79 @@ function moveRight(dist){
 const ambient = new THREE.AmbientLight(0x080d06, 0.10);
 scene.add(ambient);
 
-// Фонарик — SpotLight прикреплён к камере
-const torch = new THREE.SpotLight(0xfff5dd, 0, 55, Math.PI*0.18, 0.35, 1.2);
+// Фонарик — SpotLight прикреплён к камере (яркий, широкий конус, реалистичное затухание)
+const TORCH_MAX = 15.0; // в 2 раза ярче прежнего (7.5)
+const torch = new THREE.SpotLight(0xfff5dd, 0, 65, Math.PI*0.24, 0.42, 1.7);
 const torchTarget = new THREE.Object3D();
 torchTarget.position.set(0,0,-1);
 camera.add(torch);
 camera.add(torchTarget);
 torch.target = torchTarget;
+// Мягкая подсветка-компаньон для более реалистичного разлива света
+const torchFill = new THREE.PointLight(0xffe9c0, 0, 5.5, 2);
+torchFill.position.set(0,-0.1,-0.4);
+camera.add(torchFill);
 scene.add(camera);
+
+// ═══════════════════════════════════════════
+//  ПЕРВОЕ ЛИЦО — РУКИ ИГРОКА
+// ═══════════════════════════════════════════
+const handsGroup=new THREE.Group();
+camera.add(handsGroup);
+
+const skinMat=new THREE.MeshLambertMaterial({color:0xc99a76});
+const sleeveMat=new THREE.MeshLambertMaterial({color:0x2a2e33});
+
+function makeArm(){
+  const g=new THREE.Group();
+  const sleeve=new THREE.Mesh(new THREE.CylinderGeometry(.075,.09,.34,8),sleeveMat);
+  sleeve.rotation.x=Math.PI/2.1; sleeve.position.z=.05; g.add(sleeve);
+  const hand=new THREE.Mesh(new THREE.BoxGeometry(.11,.09,.16),skinMat);
+  hand.position.set(0,-.02,.24); g.add(hand);
+  g.userData.hand=hand;
+  return g;
+}
+
+const leftArm=makeArm();
+leftArm.position.set(-.28,-.32,-.42);
+leftArm.rotation.y=.12;
+handsGroup.add(leftArm);
+
+// Фонарик в левой руке — всегда виден
+const flashMesh=new THREE.Group();
+const flashBody=new THREE.Mesh(new THREE.CylinderGeometry(.028,.034,.19,10),
+  new THREE.MeshStandardMaterial({color:0x333333,metalness:.7,roughness:.35}));
+flashBody.rotation.x=Math.PI/2; flashMesh.add(flashBody);
+const flashHead=new THREE.Mesh(new THREE.CylinderGeometry(.038,.03,.05,10),
+  new THREE.MeshStandardMaterial({color:0x222222,metalness:.8,roughness:.3}));
+flashHead.position.z=-.11; flashHead.rotation.x=Math.PI/2; flashMesh.add(flashHead);
+const flashLens=new THREE.Mesh(new THREE.CircleGeometry(.028,10),
+  new THREE.MeshBasicMaterial({color:0xfff2c0}));
+flashLens.position.z=-.135; flashMesh.add(flashLens);
+flashMesh.position.copy(leftArm.userData.hand.position);
+flashMesh.position.z+=.13;
+flashMesh.rotation.x=-.15;
+leftArm.add(flashMesh);
+
+const rightArm=makeArm();
+rightArm.position.set(.28,-.32,-.42);
+rightArm.rotation.y=-.12;
+handsGroup.add(rightArm);
+
+let heldItemMesh=null;
+function setHeldItem(name){
+  if(heldItemMesh){ rightArm.remove(heldItemMesh); heldItemMesh=null; }
+  if(!name) return;
+  const geo=itemGeometry(name);
+  const mat=makeItemMaterial(name);
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.scale.setScalar(0.55);
+  mesh.position.copy(rightArm.userData.hand.position);
+  mesh.position.z+=.1;
+  mesh.rotation.set(.3,.4,0);
+  rightArm.add(mesh);
+  heldItemMesh=mesh;
+}
 
 // Свет комнаты (меняется при переходе, очень слабый fill)
 const roomPL = new THREE.PointLight(0x223311, 0.08, 18);
@@ -640,10 +719,92 @@ function makeFloorTex(hexBase) {
   texCache[key]=t; return t;
 }
 
+// Текстура предмета: грязный/ржавый металл, потёртости, царапины — по стилю референса
+function makeItemTex(hexBase, style){
+  const key='item_'+hexBase+'_'+style;
+  if(texCache[key]) return texCache[key];
+  const cv=document.createElement('canvas');
+  cv.width=cv.height=256;
+  const ctx=cv.getContext('2d');
+  const r=(hexBase>>16)&0xff, g=(hexBase>>8)&0xff, b=hexBase&0xff;
+  ctx.fillStyle=`rgb(${r},${g},${b})`;
+  ctx.fillRect(0,0,256,256);
+  // Базовое зерно
+  for(let i=0;i<9000;i++){
+    const x=Math.random()*256,y=Math.random()*256;
+    const v=(Math.random()-.5)*40;
+    ctx.fillStyle=`rgba(${Math.min(255,Math.max(0,r+v))},${Math.min(255,Math.max(0,g+v))},${Math.min(255,Math.max(0,b+v))},.35)`;
+    ctx.fillRect(x,y,1.5,1.5);
+  }
+  if(style==='metal'||style==='key'){
+    // Ржавчина пятнами
+    for(let i=0;i<14;i++){
+      const x=Math.random()*256,y=Math.random()*256,rs=6+Math.random()*22;
+      const grd=ctx.createRadialGradient(x,y,0,x,y,rs);
+      grd.addColorStop(0,'rgba(120,55,15,.55)');
+      grd.addColorStop(1,'rgba(120,55,15,0)');
+      ctx.fillStyle=grd; ctx.fillRect(x-rs,y-rs,rs*2,rs*2);
+    }
+    // Царапины-блики
+    ctx.strokeStyle='rgba(255,255,255,.18)';
+    for(let i=0;i<10;i++){
+      ctx.beginPath();
+      const x=Math.random()*256,y=Math.random()*256,len=10+Math.random()*40,ang=Math.random()*Math.PI;
+      ctx.moveTo(x,y); ctx.lineTo(x+Math.cos(ang)*len,y+Math.sin(ang)*len); ctx.lineWidth=.7; ctx.stroke();
+    }
+  } else if(style==='plastic'){
+    // Глянцевый блик сверху + грязные потёки
+    const grd=ctx.createLinearGradient(0,0,0,256);
+    grd.addColorStop(0,'rgba(255,255,255,.18)'); grd.addColorStop(.4,'rgba(255,255,255,0)');
+    ctx.fillStyle=grd; ctx.fillRect(0,0,256,256);
+    for(let i=0;i<6;i++){
+      const x=30+Math.random()*196;
+      ctx.fillStyle='rgba(0,0,0,.15)';
+      ctx.fillRect(x,0,2+Math.random()*3,80+Math.random()*140);
+    }
+  } else if(style==='paper'){
+    ctx.strokeStyle='rgba(90,70,30,.4)';
+    for(let i=0;i<6;i++){ ctx.beginPath();ctx.moveTo(0,20+i*38);ctx.lineTo(256,18+i*40);ctx.lineWidth=1;ctx.stroke(); }
+    ctx.fillStyle='rgba(40,30,10,.25)';
+    for(let i=0;i<80;i++) ctx.fillRect(Math.random()*256,Math.random()*256,2,1);
+  }
+  // Общее затемнение краёв (AO)
+  const vg=ctx.createRadialGradient(128,128,60,128,128,180);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,.4)');
+  ctx.fillStyle=vg; ctx.fillRect(0,0,256,256);
+  const t=new THREE.CanvasTexture(cv);
+  texCache[key]=t; return t;
+}
+function itemStyle(name){
+  if(name==='фонарик') return 'plastic';
+  if(['ржавый ключ','ключ выхода','скальпель','железный прут'].includes(name)) return 'metal';
+  if(['канистра','канистра с бензином','бензин'].includes(name)) return 'plastic';
+  if(['записка главврача','карточка пациента','магнитофонная лента'].includes(name)) return 'paper';
+  return 'metal';
+}
+function makeItemMaterial(name){
+  const it=ITEMS[name]; if(!it) return new THREE.MeshLambertMaterial({color:0xffffff});
+  return new THREE.MeshLambertMaterial({
+    map:makeItemTex(it.col, itemStyle(name)),
+    color:0xffffff, emissive:it.col, emissiveIntensity:.22,
+  });
+}
+function itemGeometry(name){
+  if(name==='успокоительное') return new THREE.SphereGeometry(.18,10,10);
+  if(name==='фонарик') return new THREE.CylinderGeometry(.08,.12,.5,10);
+  if(name==='канистра'||name==='канистра с бензином') return new THREE.CylinderGeometry(.18,.22,.42,10);
+  if(name==='железный прут') return new THREE.CylinderGeometry(.05,.05,.9,8);
+  if(name==='скальпель') return new THREE.BoxGeometry(.06,.5,.06);
+  if(['записка главврача','карточка пациента','магнитофонная лента'].includes(name)) return new THREE.BoxGeometry(.32,.02,.22);
+  return new THREE.BoxGeometry(.3,.3,.3);
+}
+
 // ═══════════════════════════════════════════
 //  СТРОИТЕЛЬСТВО ПОДЗЕМЕЛЬЯ
 // ═══════════════════════════════════════════
 const itemMeshes = []; // { mesh, light, itemName, roomKey }
+const wallColliders = []; // { x,z,hx,hz } — коллизии стен/мебели
+const dripDrops = []; // капающая вода с потолка
 let shadowEntity = null;
 
 function buildDungeon() {
@@ -661,12 +822,21 @@ function buildDungeon() {
   shadowEntity = buildShadow();
   shadowEntity.visible = false;
   scene.add(shadowEntity);
+  monsterLight = new THREE.PointLight(0xff2200, 1.4, 6, 2);
+  monsterLight.position.set(0,1.6,0);
+  scene.add(monsterLight);
   addFurniture();
 }
 
 function box(x,y,z,w,h,d,mat){
   const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
   m.position.set(x,y,z); scene.add(m); return m;
+}
+// Как box(), но также регистрирует коллайдер (для стен и мебели — сквозь них нельзя пройти)
+function solidBox(x,y,z,w,h,d,mat){
+  const m=box(x,y,z,w,h,d,mat);
+  wallColliders.push({x,z,hx:w/2,hz:d/2});
+  return m;
 }
 
 function wallMat(hex){ return new THREE.MeshLambertMaterial({map:makeTex(hex,55)}); }
@@ -694,7 +864,7 @@ function addCeilingPanel(cx, cz, color, intensity){
   // Рассеянный тусклый свет вниз (холодный зеленоватый)
   const pl=new THREE.PointLight(color, intensity, 12);
   pl.position.set(cx, RH-0.32, cz);
-  pl.userData={base:intensity, phase:Math.random()*Math.PI*2};
+  pl.userData={base:intensity, phase:Math.random()*Math.PI*2, broken:Math.random()<0.25};
   scene.add(pl); staticLights.push(pl);
 }
 
@@ -702,17 +872,18 @@ function buildWall(wx,wz,alongX,roomW,hasExit,mat){
   const pw=(roomW-DW)/2;
   const topH=RH-DH;
   if(!hasExit){
-    if(alongX) box(wx,RH/2,wz,roomW,RH,WT,mat);
-    else        box(wx,RH/2,wz,WT,RH,roomW,mat);
+    if(alongX) solidBox(wx,RH/2,wz,roomW,RH,WT,mat);
+    else        solidBox(wx,RH/2,wz,WT,RH,roomW,mat);
   } else {
     const off=DW/2+pw/2;
     if(alongX){
-      box(wx-off, RH/2, wz, pw, RH, WT, mat);
-      box(wx+off, RH/2, wz, pw, RH, WT, mat);
+      solidBox(wx-off, RH/2, wz, pw, RH, WT, mat);
+      solidBox(wx+off, RH/2, wz, pw, RH, WT, mat);
+      // Перемычка над проёмом — НЕ коллайдер (иначе блокирует проход, т.к. коллизии 2D по X/Z)
       if(topH>0) box(wx, DH+topH/2, wz, DW, topH, WT, mat);
     } else {
-      box(wx, RH/2, wz-off, WT, RH, pw, mat);
-      box(wx, RH/2, wz+off, WT, RH, pw, mat);
+      solidBox(wx, RH/2, wz-off, WT, RH, pw, mat);
+      solidBox(wx, RH/2, wz+off, WT, RH, pw, mat);
       if(topH>0) box(wx, DH+topH/2, wz, WT, topH, DW, mat);
     }
   }
@@ -735,7 +906,8 @@ function buildRoom(key,r){
   if(!r.dark){
     const pl=new THREE.PointLight(r.light, r.li*1.4, 18);
     pl.position.set(cx, RH-0.4, cz);
-    pl.userData={flicker:true, base:r.li*1.4, phase:Math.random()*Math.PI*2};
+    const broken=Math.random()<0.3;
+    pl.userData={flicker:true, base:r.li*1.4, phase:Math.random()*Math.PI*2, broken};
     scene.add(pl);
     staticLights.push(pl);
   }
@@ -753,13 +925,13 @@ function buildCorridor(kA,dir,kB){
   if(isNS){
     box(mx,-WT/2,mz,DW,WT,len,fm);
     box(mx,RH+WT/2,mz,DW,WT,len,cm);
-    box(mx-DW/2,RH/2,mz,WT,RH,len,cm);
-    box(mx+DW/2,RH/2,mz,WT,RH,len,cm);
+    solidBox(mx-DW/2,RH/2,mz,WT,RH,len,cm);
+    solidBox(mx+DW/2,RH/2,mz,WT,RH,len,cm);
   } else {
     box(mx,-WT/2,mz,len,WT,DW,fm);
     box(mx,RH+WT/2,mz,len,WT,DW,cm);
-    box(mx,RH/2,mz-DW/2,len,RH,WT,cm);
-    box(mx,RH/2,mz+DW/2,len,RH,WT,cm);
+    solidBox(mx,RH/2,mz-DW/2,len,RH,WT,cm);
+    solidBox(mx,RH/2,mz+DW/2,len,RH,WT,cm);
   }
 }
 
@@ -774,15 +946,14 @@ function spawnItems(key,r){
     const angle=(i/Math.max(items.length,1))*Math.PI*2;
     const rad=2.8;
     const x=cx+Math.cos(angle)*rad, z=cz+Math.sin(angle)*rad;
-    const geo = name==='успокоительное' ? new THREE.SphereGeometry(.18,8,8)
-               : name==='фонарик' ? new THREE.CylinderGeometry(.08,.12,.5,8)
-               : new THREE.BoxGeometry(.3,.3,.3);
-    const mat=new THREE.MeshLambertMaterial({color:it.col,emissive:it.col,emissiveIntensity:.5});
+    const geo = itemGeometry(name);
+    const mat = makeItemMaterial(name);
     const mesh=new THREE.Mesh(geo,mat);
     mesh.position.set(x,.45,z);
+    if(name==='железный прут'||name==='скальпель') mesh.rotation.z=Math.PI/2.2;
     mesh.userData={itemName:name,roomKey:key};
     scene.add(mesh);
-    const light=new THREE.PointLight(it.col,.8,3.5);
+    const light=new THREE.PointLight(it.col,.9,3.5);
     light.position.copy(mesh.position);
     scene.add(light);
     itemMeshes.push({mesh,light,itemName:name,roomKey:key});
@@ -802,24 +973,38 @@ function removeItemMesh(name,key){
 // ═══════════════════════════════════════════
 function addFurniture(){
   const dm=flatMat(0x1a1a1a);
-  // Палата №7 — кровати
+  // Палата №7 — кровати (ржавые рамы + пятнистые матрасы)
   const [w7x,w7z]=ROOMS['палата №7'].pos;
-  for(let i=0;i<3;i++) box(w7x-3+i*3,0.3,w7z,.9,.4,2,flatMat(0x2a1a1a));
+  const bedMat=new THREE.MeshLambertMaterial({map:makeItemTex(0x3a2020,'metal')});
+  for(let i=0;i<3;i++) solidBox(w7x-3+i*3,0.3,w7z,.9,.4,2,bedMat);
   // Процедурная — стол
   const [px,pz]=ROOMS['процедурная'].pos;
-  box(px,0.45,pz,0.7,.9,2.2,flatMat(0x888877));
-  // Электрощитовая — генератор
+  solidBox(px,0.45,pz,0.7,.9,2.2,new THREE.MeshLambertMaterial({map:makeItemTex(0x888877,'metal')}));
+  // Электрощитовая — генератор (текстурированный металл)
   const [gx,gz]=ROOMS['электрощитовая'].pos;
-  box(gx,0.65,gz,1.6,1.3,0.9,flatMat(0x334444));
+  solidBox(gx,0.65,gz,1.6,1.3,0.9,new THREE.MeshLambertMaterial({map:makeItemTex(0x334444,'metal')}));
   box(gx,1.35,gz+0.2,1.6,.12,.7,flatMat(0x222222));
   // Морг — стол + секции
   const [mx,mz]=ROOMS['морг'].pos;
-  box(mx,0.45,mz,0.7,.9,2,flatMat(0x888899));
-  for(let i=0;i<3;i++) box(mx+3.5,0.65+i*.65,mz-3+i*2.5,.3,1.3,.9,flatMat(0x555566));
+  solidBox(mx,0.45,mz,0.7,.9,2,new THREE.MeshLambertMaterial({map:makeItemTex(0x888899,'metal')}));
+  for(let i=0;i<3;i++) solidBox(mx+3.5,0.65+i*.65,mz-3+i*2.5,.3,1.3,.9,new THREE.MeshLambertMaterial({map:makeItemTex(0x555566,'metal')}));
   // Кабинет — стол
   const [kx,kz]=ROOMS['кабинет главврача'].pos;
-  box(kx,0.45,kz,1.8,.9,0.9,flatMat(0x3a2a15));
-  box(kx-3,0.9,kz,0.5,1.8,.6,flatMat(0x2a1f10));
+  solidBox(kx,0.45,kz,1.8,.9,0.9,new THREE.MeshLambertMaterial({map:makeItemTex(0x3a2a15,'metal')}));
+  solidBox(kx-3,0.9,kz,0.5,1.8,.6,flatMat(0x2a1f10));
+  // Капающая вода с потолка (несколько комнат) — простые "капли"-цилиндры с покачиванием
+  const dripRooms=['коридор а','коридор б','морг','изолятор'];
+  for(const rk of dripRooms){
+    const rr=ROOMS[rk]; if(!rr) continue;
+    for(let i=0;i<2;i++){
+      const dx=(Math.random()-.5)*RW*.6, dz=(Math.random()-.5)*RW*.6;
+      const drip=new THREE.Mesh(new THREE.CylinderGeometry(.015,.005,.22,5),
+        new THREE.MeshLambertMaterial({color:0x99bbdd,transparent:true,opacity:.55}));
+      drip.position.set(rr.pos[0]+dx, RH-0.3, rr.pos[1]+dz);
+      scene.add(drip);
+      dripDrops.push({mesh:drip,baseY:RH-0.3,speed:0.6+Math.random()*0.6,t:Math.random()*3});
+    }
+  }
 }
 
 // ═══════════════════════════════════════════
@@ -827,16 +1012,40 @@ function addFurniture(){
 // ═══════════════════════════════════════════
 function buildShadow(){
   const g=new THREE.Group();
-  const dm=new THREE.MeshLambertMaterial({color:0x050508,emissive:0x050508,emissiveIntensity:1.5});
-  const torso=new THREE.Mesh(new THREE.BoxGeometry(.5,.9,.25),dm); torso.position.y=1.3; g.add(torso);
-  const head=new THREE.Mesh(new THREE.BoxGeometry(.42,.46,.36),dm); head.position.y=2.0; g.add(head);
-  const armL=new THREE.Mesh(new THREE.BoxGeometry(.18,.85,.18),dm); armL.position.set(-.38,1.2,0); armL.rotation.z=.2; g.add(armL);
-  const armR=new THREE.Mesh(new THREE.BoxGeometry(.18,.85,.18),dm); armR.position.set(.38,1.2,0); armR.rotation.z=-.2; g.add(armR);
-  const legL=new THREE.Mesh(new THREE.BoxGeometry(.2,.75,.2),dm); legL.position.set(-.15,.38,0); g.add(legL);
-  const legR=new THREE.Mesh(new THREE.BoxGeometry(.2,.75,.2),dm); legR.position.set(.15,.38,0); g.add(legR);
-  const em=new THREE.MeshLambertMaterial({color:0xff0000,emissive:0xff0000,emissiveIntensity:3});
-  const eL=new THREE.Mesh(new THREE.SphereGeometry(.055,6,6),em); eL.position.set(-.1,2.04,.19); g.add(eL);
-  const eR=new THREE.Mesh(new THREE.SphereGeometry(.055,6,6),em); eR.position.set(.1,2.04,.19); g.add(eR);
+  const skinTex=makeItemTex(0x5a2a1a,'metal');
+  const dm=new THREE.MeshLambertMaterial({map:skinTex,color:0x7a3a22,emissive:0x1a0700,emissiveIntensity:.6});
+  const torso=new THREE.Mesh(new THREE.BoxGeometry(.55,.95,.32),dm); torso.position.y=1.28; g.add(torso);
+  const head=new THREE.Group(); head.position.y=2.02; g.add(head);
+  const skull=new THREE.Mesh(new THREE.BoxGeometry(.46,.44,.42),dm); head.add(skull);
+  // Нижняя челюсть — открывается во время скримера
+  const jaw=new THREE.Mesh(new THREE.BoxGeometry(.4,.22,.4),
+    new THREE.MeshLambertMaterial({map:skinTex,color:0x6a2a1a}));
+  jaw.position.set(0,-.22,.02); jaw.name='jaw'; head.add(jaw);
+  // Зубы (верх и низ)
+  const toothMat=new THREE.MeshLambertMaterial({color:0xe8e0c8,emissive:0x332e1c,emissiveIntensity:.4});
+  for(let i=0;i<6;i++){
+    const tx=-.16+i*.065;
+    const tUp=new THREE.Mesh(new THREE.ConeGeometry(.028,.11,4),toothMat);
+    tUp.position.set(tx,-.13,.2); tUp.rotation.x=Math.PI; skull.add(tUp);
+    const tLo=new THREE.Mesh(new THREE.ConeGeometry(.026,.09,4),toothMat);
+    tLo.position.set(tx,.06,.18); jaw.add(tLo);
+  }
+  const armL=new THREE.Mesh(new THREE.BoxGeometry(.2,.9,.2),dm); armL.position.set(-.42,1.2,0); armL.rotation.z=.25; armL.name='armL'; g.add(armL);
+  const armR=new THREE.Mesh(new THREE.BoxGeometry(.2,.9,.2),dm); armR.position.set(.42,1.2,0); armR.rotation.z=-.25; armR.name='armR'; g.add(armR);
+  // Когти
+  for(const side of [-1,1]){
+    for(let i=0;i<3;i++){
+      const claw=new THREE.Mesh(new THREE.ConeGeometry(.025,.16,4),toothMat);
+      claw.position.set(side*.42+(i-1)*.05,0.7,.1); claw.rotation.x=Math.PI*.55;
+      g.add(claw);
+    }
+  }
+  const legL=new THREE.Mesh(new THREE.BoxGeometry(.22,.78,.22),dm); legL.position.set(-.16,.39,0); g.add(legL);
+  const legR=new THREE.Mesh(new THREE.BoxGeometry(.22,.78,.22),dm); legR.position.set(.16,.39,0); g.add(legR);
+  const em=new THREE.MeshLambertMaterial({color:0xffdd33,emissive:0xffcc00,emissiveIntensity:3.5});
+  const eL=new THREE.Mesh(new THREE.SphereGeometry(.07,8,8),em); eL.position.set(-.11,.03,.2); skull.add(eL);
+  const eR=new THREE.Mesh(new THREE.SphereGeometry(.07,8,8),em); eR.position.set(.11,.03,.2); skull.add(eR);
+  g.userData.parts={armL,armR,legL,legR,jaw,head};
   return g;
 }
 
@@ -865,12 +1074,33 @@ function onKey(e){
 
 const vel=new THREE.Vector3();
 const dir=new THREE.Vector3();
+const _fwdScratch=new THREE.Vector3();
+const _rightScratch=new THREE.Vector3();
 
 // Джойстик-переменные (тач)
 let joyActive=false, joyDX=0, joyDZ=0;
+let walkCycle=0; // для покачивания рук/камеры при ходьбе
+
+// Разрешает столкновение игрока (окружность радиуса PLAYER_R) со стенами/мебелью (AABB по X/Z)
+function resolveCollisions(pos){
+  for(let iter=0; iter<3; iter++){
+    for(const c of wallColliders){
+      const cx=Math.max(c.x-c.hx, Math.min(pos.x, c.x+c.hx));
+      const cz=Math.max(c.z-c.hz, Math.min(pos.z, c.z+c.hz));
+      const dx=pos.x-cx, dz=pos.z-cz;
+      const distSq=dx*dx+dz*dz;
+      if(distSq < PLAYER_R*PLAYER_R){
+        const dist=Math.sqrt(distSq)||0.0001;
+        const push=PLAYER_R-dist;
+        pos.x+=dx/dist*push;
+        pos.z+=dz/dist*push;
+      }
+    }
+  }
+}
 
 function handleMovement(dt){
-  if(!gameActive||paused||gs.won||gs.dead) return;
+  if(!gameActive||paused||gs.won||gs.dead||jumpscareActive) return;
   vel.x-=vel.x*10*dt; vel.z-=vel.z*10*dt;
   dir.z=(keys['KeyW']||keys['ArrowUp']?-1:0)+(keys['KeyS']||keys['ArrowDown']?1:0);
   dir.x=(keys['KeyA']||keys['ArrowLeft']?-1:0)+(keys['KeyD']||keys['ArrowRight']?1:0);
@@ -879,10 +1109,21 @@ function handleMovement(dt){
   dir.normalize();
   if(dir.z) vel.z+=dir.z*SPEED*dt*10;
   if(dir.x) vel.x+=dir.x*SPEED*dt*10;
-  moveRight(vel.x*dt);
-  moveForward(-vel.z*dt);
+
+  const moving = Math.abs(vel.x)>0.05||Math.abs(vel.z)>0.05;
+  if(moving) walkCycle+=dt*7.5; else walkCycle*=0.9;
+
+  // Считаем смещение и применяем по осям отдельно, чтобы скольжение вдоль стен работало корректно
+  _fwdScratch.set(Math.sin(yaw),0,Math.cos(yaw)).negate();
+  _rightScratch.set(Math.cos(yaw),0,-Math.sin(yaw));
+
+  camera.position.addScaledVector(_rightScratch, vel.x*dt);
+  resolveCollisions(camera.position);
+  camera.position.addScaledVector(_fwdScratch, -vel.z*dt);
+  resolveCollisions(camera.position);
+
   camera.position.y=EYE;
-  // Ограничение мира
+  // Ограничение мира (страховка)
   camera.position.x=Math.max(-8,Math.min(72,camera.position.x));
   camera.position.z=Math.max(-72,Math.min(52,camera.position.z));
 
@@ -1048,7 +1289,8 @@ function startGenerator(){
 // ═══════════════════════════════════════════
 function toggleFlash(forceOn){
   gs.flashOn = forceOn!==undefined ? forceOn : !gs.flashOn;
-  torch.intensity = gs.flashOn ? 7.5 : 0;
+  torch.intensity = gs.flashOn ? TORCH_MAX : 0;
+  torchFill.intensity = gs.flashOn ? TORCH_MAX*0.18 : 0;
   document.getElementById('flashlight-icon').textContent = gs.flashOn ? '🔦 включён' : '🔦 выключен';
   document.getElementById('flashlight-icon').style.color = gs.flashOn ? '#ffdd88' : '#333';
   if(forceOn===undefined) msg(gs.flashOn ? '🔦 Фонарик включён.' : '🔦 Фонарик выключен.');
@@ -1089,26 +1331,35 @@ document.getElementById('safe-input').addEventListener('keydown',e=>{
 document.getElementById('safe-esc').addEventListener('click',closeSafe);
 
 // ═══════════════════════════════════════════
-//  СУЩНОСТЬ — ТЕНЬ
+//  СУЩНОСТЬ — МОНСТР (ходит по коридорам, поджидает игрока)
 // ═══════════════════════════════════════════
 const SAFE_ROOMS=new Set(['вход','выход']);
 const NEAR_MSGS=['👣 Тяжёлые шаги. Рядом. Очень близко.','💨 Запах гнили нарастает.',
   '👁️ Тень на стене — там, где нет источника света.','🫁 Нечеловеческий выдох за стеной.'];
-const SCARE_MSGS=['ОНО ЗДЕСЬ','НЕ СМОТРИ НА НЕГО','БЕГИ','ОН ВИДИТ ТЕБЯ'];
+
+const monsterPos=new THREE.Vector3();
+let monsterWaitTimer=0;      // сколько ещё монстр "поджидает" в текущей комнате
+let jumpscareActive=false;
+let jumpscarePhase=null;     // 'fly' | 'hold' | null
+let jumpscareT=0;
+const monsterStartPos=new THREE.Vector3();
+const monsterFlyPos=new THREE.Vector3();
+let shakeTime=0, shakeMag=0;
+let reviving=false, reviveT=0;
+let monsterLight=null;
 
 function activateEntity(){
   const cands=Object.keys(ROOMS).filter(r=>!SAFE_ROOMS.has(r)&&r!==gs.room);
   gs.entityRoom=cands[Math.floor(Math.random()*cands.length)]||'морг';
   gs.entityActive=true;
+  const r=ROOMS[gs.entityRoom];
+  if(r) monsterPos.set(r.pos[0],0,r.pos[1]);
+  monsterWaitTimer=1+Math.random()*2;
   setTimeout(()=>msg('💀 Где-то в темноте — тяжёлые шаги. Ты не один.',3500),500);
 }
 
-function updateEntity(dt){
-  if(!gs.entityActive) return;
-  gs.entityTimer+=dt;
-  const interval=Math.max(1.5, 4-gs.entityEncounters*.8);
-  if(gs.entityTimer<interval) return;
-  gs.entityTimer=0;
+// Выбирает следующую комнату для монстра: чаще движется в сторону игрока по графу соседних комнат
+function pickNextMonsterRoom(){
   const r=ROOMS[gs.entityRoom];
   if(!r) return;
   const adj=Object.values(r.exits||{}).filter(x=>x&&!SAFE_ROOMS.has(x));
@@ -1117,50 +1368,112 @@ function updateEntity(dt){
     const tr=ROOMS[x]; if(!tr) return false;
     return Object.values(tr.exits||{}).includes(gs.room)||x===gs.room;
   });
-  const chosenArr=(toward.length&&Math.random()<.55) ? toward : adj;
+  const chosenArr=(toward.length&&Math.random()<.6) ? toward : adj;
   gs.entityRoom=chosenArr[Math.floor(Math.random()*chosenArr.length)];
-  if(gs.entityRoom===gs.room){ encounter(); return; }
   const nowR=ROOMS[gs.entityRoom];
-  if(nowR && Object.values(nowR.exits||{}).includes(gs.room))
+  if(nowR && Object.values(nowR.exits||{}).includes(gs.room) && Math.random()<.5)
     msg(NEAR_MSGS[Math.floor(Math.random()*NEAR_MSGS.length)],3000);
-  placeShadow();
+  // Монстр иногда "поджидает за углом" перед следующим рывком
+  monsterWaitTimer = Math.random()<0.4 ? 1.2+Math.random()*2.2 : 0;
 }
 
+function updateEntity(dt){
+  if(!gs.entityActive||jumpscareActive) return;
+  if(gs.entityGrace>0){ gs.entityGrace-=dt; if(shadowEntity) shadowEntity.visible=false; return; }
+  const r=ROOMS[gs.entityRoom];
+  if(!r) return;
+  const tx=r.pos[0], tz=r.pos[1];
+  const dx=tx-monsterPos.x, dz=tz-monsterPos.z;
+  const dist=Math.sqrt(dx*dx+dz*dz);
+  if(monsterWaitTimer>0){
+    monsterWaitTimer-=dt;
+  } else if(dist>0.35){
+    const speed=MONSTER_SPEED*(1+gs.entityEncounters*0.12);
+    const step=Math.min(speed*dt,dist);
+    monsterPos.x+=dx/dist*step;
+    monsterPos.z+=dz/dist*step;
+  } else {
+    pickNextMonsterRoom();
+  }
+  placeShadow();
+  // Дистанция до игрока — определяет столкновение
+  const pdx=camera.position.x-monsterPos.x, pdz=camera.position.z-monsterPos.z;
+  const pdist=Math.sqrt(pdx*pdx+pdz*pdz);
+  if(pdist<1.9){ encounter(); return; }
+  if(pdist<7 && Math.random()<0.012) msg(NEAR_MSGS[Math.floor(Math.random()*NEAR_MSGS.length)],3000);
+}
+
+// ═══════════════════════════════════════════
+//  СКРИМЕР + ОБМОРОК + РЕСПАВН
+// ═══════════════════════════════════════════
 function encounter(){
+  if(jumpscareActive) return;
+  jumpscareActive=true;
   gs.entityEncounters++;
   const drain=20+gs.entityEncounters*5;
   gs.sanity=Math.max(0,gs.sanity-drain);
-  // Джампскер
-  const jel=document.getElementById('jumpscare');
-  jel.textContent=SCARE_MSGS[Math.floor(Math.random()*SCARE_MSGS.length)];
-  jel.style.display='flex';
-  // Звуковой эффект (Web Audio)
+  unlockPointer();
   playScare();
-  setTimeout(()=>jel.style.display='none',700);
-  // Бегство
-  const r=ROOMS[gs.room];
-  const adj=Object.values(r?.exits||{}).filter(x=>x&&x!==gs.entityRoom);
-  const flee=adj.length ? adj[Math.floor(Math.random()*adj.length)] : 'вход';
-  const fr=ROOMS[flee];
-  if(fr) camera.position.set(fr.pos[0],EYE,fr.pos[1]);
-  gs.room=flee;
+  triggerCameraShake(1.0,0.9);
+  // Быстрая красная вспышка удара + монстр летит в камеру
+  monsterStartPos.copy(monsterPos);
+  jumpscarePhase='fly';
+  jumpscareT=0;
+  if(shadowEntity) shadowEntity.visible=true;
+  const flashEl=document.getElementById('jumpscare');
+  setTimeout(()=>{ flashEl.style.background='#fff'; flashEl.style.display='flex'; },380);
+  setTimeout(()=>{ flashEl.style.display='none'; flashEl.style.background='#cc0000'; },460);
+  // Fade to black
   setTimeout(()=>{
-    msg(`Ты в панике вырываешься в ${ROOMS[flee]?.name||flee}.`,3500);
-    updateHUD(); updateRoomLight(flee);
-  },750);
-  if(gs.sanity<=0) setTimeout(()=>die(),1500);
-  updateHUD(); placeShadow();
+    document.getElementById('faint-overlay').style.transition='opacity .35s';
+    document.getElementById('faint-overlay').style.opacity='1';
+  },500);
+  // Respawn
+  setTimeout(()=>{ respawnPlayer(); }, 900);
+  updateHUD();
+}
+
+function triggerCameraShake(mag,dur){ shakeMag=mag; shakeTime=dur; }
+
+function respawnPlayer(){
+  if(gs.sanity<=0){
+    jumpscareActive=false; jumpscarePhase=null;
+    document.getElementById('faint-overlay').style.opacity='1';
+    die();
+    return;
+  }
+  gs.room='вход';
+  yaw=0; pitch=0;
+  camera.rotation.set(0,0,0);
+  camera.position.set(ROOMS['вход'].pos[0], 0.35, ROOMS['вход'].pos[1]);
+  reviving=true; reviveT=0;
+  jumpscareActive=false; jumpscarePhase=null;
+  if(shadowEntity) shadowEntity.visible=false;
+  // Отправить монстра подальше и дать игроку передышку
+  const far=Object.keys(ROOMS).filter(r=>!SAFE_ROOMS.has(r));
+  gs.entityRoom=far[Math.floor(Math.random()*far.length)]||'морг';
+  const fr=ROOMS[gs.entityRoom];
+  if(fr) monsterPos.set(fr.pos[0],0,fr.pos[1]);
+  gs.entityGrace=7;
+  updateRoomLight('вход');
+  gs.visited.add('вход');
+  updateHUD();
+  const fo=document.getElementById('faint-overlay');
+  setTimeout(()=>{ fo.style.transition='opacity 1.6s'; fo.style.opacity='0'; },80);
+  msg('Ты приходишь в себя на холодном полу…',3500);
+  lockPointer();
 }
 
 function placeShadow(){
   if(!shadowEntity) return;
-  if(!gs.entityActive||!gs.entityRoom||!ROOMS[gs.entityRoom]){
-    shadowEntity.visible=false; return;
+  if(!gs.entityActive||!gs.entityRoom||!ROOMS[gs.entityRoom]||jumpscareActive){
+    if(!jumpscareActive) shadowEntity.visible=false;
+    return;
   }
-  const[sx,sz]=ROOMS[gs.entityRoom].pos;
-  shadowEntity.position.set(sx,0,sz);
+  shadowEntity.position.set(monsterPos.x,0,monsterPos.z);
   shadowEntity.lookAt(camera.position.x,0,camera.position.z);
   shadowEntity.visible=true;
+  if(monsterLight) monsterLight.position.set(monsterPos.x,1.6,monsterPos.z);
 }
 
 // ═══════════════════════════════════════════
@@ -1241,8 +1554,13 @@ function updateHUD(){
     const sl=document.createElement('div');
     sl.className='slot'; sl.innerHTML=`${it.emoji}<span class="slot-tip">${it.name}</span>`;
     sl.style.pointerEvents='auto';
-    if(it.use) sl.addEventListener('click',()=>useItem(name));
-    else sl.addEventListener('click',()=>msg(it.desc||it.name,2500));
+    if(gs.heldItem===name) sl.classList.add('held');
+    sl.addEventListener('click',()=>{
+      if(gs.heldItem===name){ gs.heldItem=null; setHeldItem(null); }
+      else { gs.heldItem=name; setHeldItem(name); }
+      updateHUD();
+    });
+    if(it.use) sl.addEventListener('dblclick',()=>useItem(name));
     panel.appendChild(sl);
   }
   updateQuests();
@@ -1541,7 +1859,8 @@ document.getElementById('start-btn').addEventListener('click',()=>{
   buildDungeon();
   gs.visited.add('вход');
   // Фонарик включён с самого начала
-  torch.intensity = gs.flashOn ? 7.5 : 0;
+  torch.intensity = gs.flashOn ? TORCH_MAX : 0;
+  torchFill.intensity = gs.flashOn ? TORCH_MAX*0.18 : 0;
   document.getElementById('flashlight-icon').textContent = '🔦 включён';
   document.getElementById('flashlight-icon').style.color = '#ffdd88';
   updateHUD();
@@ -1569,6 +1888,8 @@ function animate(){
     applySanityFX();
     updateEntity(dt);
     updateInteract();
+    updateJumpscare(dt);
+    updateRevive(dt);
   }
   // Анимация предметов
   for(const e of itemMeshes){
@@ -1577,17 +1898,85 @@ function animate(){
     e.mesh.rotation.y+=dt*1.3;
     e.light.position.copy(e.mesh.position);
   }
-  // Мигание ламп
+  // Мигание ламп (некоторые лампы неисправны — резкое мерцание)
   for(const pl of staticLights){
     const t=now*.001;
-    pl.intensity=pl.userData.base*(0.82+0.18*Math.sin(t*7+pl.userData.phase));
+    if(pl.userData.broken){
+      pl.intensity=Math.random()<0.08 ? 0 : pl.userData.base*(0.6+0.4*Math.random());
+    } else {
+      pl.intensity=pl.userData.base*(0.82+0.18*Math.sin(t*7+pl.userData.phase));
+    }
   }
-  // Покачивание тени
-  if(shadowEntity?.visible){
-    shadowEntity.position.y=Math.sin(now*.003)*.12;
+  // Динамическое мерцание фонарика
+  if(gs.flashOn){
+    const flick=1+(Math.random()-0.5)*0.05+Math.sin(now*.011)*0.02;
+    torch.intensity=TORCH_MAX*flick;
+    torchFill.intensity=TORCH_MAX*0.18*flick;
+  }
+  // Капающая вода
+  for(const d of dripDrops){
+    d.t+=dt*d.speed;
+    d.mesh.position.y=d.baseY-((d.t)%1.6)*1.6;
+    d.mesh.visible=(d.t%1.6)<1.4;
+  }
+  // Покачивание рук при ходьбе
+  if(!jumpscareActive && !reviving){
+    const bobX=Math.sin(walkCycle)*0.02;
+    const bobY=Math.abs(Math.cos(walkCycle))*0.015;
+    handsGroup.position.set(bobX,-bobY,0);
+    handsGroup.rotation.z=Math.sin(walkCycle*0.5)*0.01;
+  }
+  // Покачивание монстра при ходьбе (не во время скримера)
+  if(shadowEntity?.visible && !jumpscareActive){
+    shadowEntity.position.y=Math.sin(now*.006)*.06;
+    const parts=shadowEntity.userData.parts;
+    if(parts){
+      parts.armL.rotation.x=Math.sin(now*.008)*.5;
+      parts.armR.rotation.x=-Math.sin(now*.008)*.5;
+    }
+  }
+  // Экранная тряска при скримере/атаке
+  if(shakeTime>0){
+    shakeTime-=dt;
+    const s=shakeMag*(shakeTime>0?1:0);
+    camera.rotation.z=(Math.random()-0.5)*0.05*s;
+    handsGroup.position.x+=(Math.random()-0.5)*0.03*s;
+  } else {
+    camera.rotation.z=0;
   }
   renderer.render(scene,camera);
   drawMinimap();
+}
+
+// Полёт монстра в лицо камере во время скримера
+function updateJumpscare(dt){
+  if(!jumpscareActive||jumpscarePhase!=='fly') return;
+  jumpscareT=Math.min(1,jumpscareT+dt*2.2);
+  const e=1-Math.pow(1-jumpscareT,3); // ease-out
+  // Целевая точка — прямо перед камерой
+  const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  const targetPos=camera.position.clone().addScaledVector(fwd, 0.4+0.9*(1-e));
+  targetPos.y-=0.15;
+  if(shadowEntity){
+    shadowEntity.position.lerpVectors(
+      new THREE.Vector3(monsterStartPos.x,0.9,monsterStartPos.z), targetPos, e);
+    shadowEntity.lookAt(camera.position.x,camera.position.y,camera.position.z);
+    shadowEntity.scale.setScalar(1+e*1.4);
+    const parts=shadowEntity.userData.parts;
+    if(parts) parts.jaw.rotation.x=Math.sin(jumpscareT*Math.PI)*0.9;
+  }
+  if(jumpscareT>=1){ jumpscarePhase='hold'; shadowEntity && shadowEntity.scale.setScalar(2.4); }
+}
+
+// Восстановление после обморока: игрок медленно "приходит в себя"
+function updateRevive(dt){
+  if(!reviving) return;
+  reviveT=Math.min(1,reviveT+dt/1.3);
+  camera.position.y=0.3+ (EYE-0.3)*reviveT;
+  const wb=document.getElementById('wake-blur');
+  wb.style.backdropFilter=`blur(${(1-reviveT)*14}px)`;
+  wb.style.webkitBackdropFilter=`blur(${(1-reviveT)*14}px)`;
+  if(reviveT>=1){ reviving=false; camera.position.y=EYE; wb.style.backdropFilter='blur(0px)'; wb.style.webkitBackdropFilter='blur(0px)'; }
 }
 
 window.addEventListener('resize',()=>{
