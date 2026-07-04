@@ -95,6 +95,15 @@ canvas{display:block}
   backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);
   background:rgba(0,0,0,0);
 }
+#static-noise{
+  position:fixed;inset:0;pointer-events:none;z-index:205;opacity:0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  mix-blend-mode:overlay;
+}
+#red-flash{
+  position:fixed;inset:0;pointer-events:none;z-index:206;opacity:0;
+  background:radial-gradient(ellipse at center,rgba(255,40,20,.15) 0%,rgba(120,0,0,.85) 100%);
+}
 
 /* ─── СЕЙФ ─── */
 #safe-modal{
@@ -236,6 +245,8 @@ canvas{display:block}
 <div id="vignette"></div>
 <div id="jumpscare"></div>
 <div id="wake-blur"></div>
+<div id="static-noise"></div>
+<div id="red-flash"></div>
 <div id="faint-overlay"></div>
 
 <!-- СЕЙФ -->
@@ -1345,7 +1356,7 @@ let jumpscareT=0;
 const monsterStartPos=new THREE.Vector3();
 const monsterFlyPos=new THREE.Vector3();
 let shakeTime=0, shakeMag=0;
-let reviving=false, reviveT=0;
+let reviving=false, reviveT=0, reviveLightTarget=0;
 let monsterLight=null;
 
 function activateEntity(){
@@ -1406,6 +1417,10 @@ function updateEntity(dt){
 // ═══════════════════════════════════════════
 //  СКРИМЕР + ОБМОРОК + РЕСПАВН
 // ═══════════════════════════════════════════
+const FLY_DUR=320;   // мс — монстр резко вылетает на камеру
+const HOLD_DUR=800;  // мс — держится на экране (0.6-1с)
+const FADE_DUR=230;  // мс — быстрый fade to black
+
 function encounter(){
   if(jumpscareActive) return;
   jumpscareActive=true;
@@ -1414,22 +1429,37 @@ function encounter(){
   gs.sanity=Math.max(0,gs.sanity-drain);
   unlockPointer();
   playScare();
-  triggerCameraShake(1.0,0.9);
-  // Быстрая красная вспышка удара + монстр летит в камеру
+  triggerCameraShake(1.6,(FLY_DUR+HOLD_DUR)/1000);
   monsterStartPos.copy(monsterPos);
   jumpscarePhase='fly';
   jumpscareT=0;
   if(shadowEntity) shadowEntity.visible=true;
-  const flashEl=document.getElementById('jumpscare');
-  setTimeout(()=>{ flashEl.style.background='#fff'; flashEl.style.display='flex'; },380);
-  setTimeout(()=>{ flashEl.style.display='none'; flashEl.style.background='#cc0000'; },460);
-  // Fade to black
+
+  // Красная вспышка удара — короткая, 0.2-0.3с
+  const red=document.getElementById('red-flash');
+  red.style.transition='opacity .05s';
+  red.style.opacity='1';
+  setTimeout(()=>{ red.style.transition='opacity .22s'; red.style.opacity='0'; },250);
+
+  // Статический шум/зерно — нарастает во время полёта, пик во время удержания
+  const noise=document.getElementById('static-noise');
+  noise.style.transition=`opacity ${FLY_DUR}ms`;
+  noise.style.opacity='0.85';
+
+  // Переход в фазу удержания на экране
+  setTimeout(()=>{ jumpscarePhase='hold'; jumpscareT=0; }, FLY_DUR);
+
+  // Быстрый fade to black после удержания
   setTimeout(()=>{
-    document.getElementById('faint-overlay').style.transition='opacity .35s';
-    document.getElementById('faint-overlay').style.opacity='1';
-  },500);
+    const fo=document.getElementById('faint-overlay');
+    fo.style.transition=`opacity ${FADE_DUR}ms`;
+    fo.style.opacity='1';
+    noise.style.transition='opacity .15s';
+    noise.style.opacity='0';
+  }, FLY_DUR+HOLD_DUR);
+
   // Respawn
-  setTimeout(()=>{ respawnPlayer(); }, 900);
+  setTimeout(()=>{ respawnPlayer(); }, FLY_DUR+HOLD_DUR+FADE_DUR+80);
   updateHUD();
 }
 
@@ -1445,21 +1475,24 @@ function respawnPlayer(){
   gs.room='вход';
   yaw=0; pitch=0;
   camera.rotation.set(0,0,0);
-  camera.position.set(ROOMS['вход'].pos[0], 0.35, ROOMS['вход'].pos[1]);
+  camera.position.set(ROOMS['вход'].pos[0], 0.28, ROOMS['вход'].pos[1]);
   reviving=true; reviveT=0;
   jumpscareActive=false; jumpscarePhase=null;
-  if(shadowEntity) shadowEntity.visible=false;
+  if(shadowEntity){ shadowEntity.visible=false; shadowEntity.scale.setScalar(1); }
   // Отправить монстра подальше и дать игроку передышку
   const far=Object.keys(ROOMS).filter(r=>!SAFE_ROOMS.has(r));
   gs.entityRoom=far[Math.floor(Math.random()*far.length)]||'морг';
   const fr=ROOMS[gs.entityRoom];
   if(fr) monsterPos.set(fr.pos[0],0,fr.pos[1]);
-  gs.entityGrace=7;
-  updateRoomLight('вход');
+  gs.entityGrace=8;
   gs.visited.add('вход');
   updateHUD();
+  // Свет комнаты выключен на момент обморока — включится постепенно с мерцанием в updateRevive
+  updateRoomLight('вход');
+  reviveLightTarget=roomPL.intensity;
+  roomPL.intensity=0;
   const fo=document.getElementById('faint-overlay');
-  setTimeout(()=>{ fo.style.transition='opacity 1.6s'; fo.style.opacity='0'; },80);
+  setTimeout(()=>{ fo.style.transition='opacity 1.4s'; fo.style.opacity='0'; },100);
   msg('Ты приходишь в себя на холодном полу…',3500);
   lockPointer();
 }
@@ -1597,15 +1630,51 @@ function initAudio(){
 }
 function playScare(){
   if(!audioCtx) return;
-  const buf=audioCtx.createBuffer(1,audioCtx.sampleRate*.4,audioCtx.sampleRate);
-  const data=buf.getChannelData(0);
-  for(let i=0;i<data.length;i++) data[i]=(Math.random()*2-1)*Math.exp(-i/data.length*3);
-  const src=audioCtx.createBufferSource();
-  src.buffer=buf;
-  const gain=audioCtx.createGain();
-  gain.gain.value=.6;
-  src.connect(gain); gain.connect(audioCtx.destination);
-  src.start();
+  const t0=audioCtx.currentTime;
+  const master=audioCtx.createGain();
+  master.gain.value=1.0;
+  master.connect(audioCtx.destination);
+
+  // 1) Резкий шумовой удар (импакт)
+  const noiseBuf=audioCtx.createBuffer(1,audioCtx.sampleRate*.5,audioCtx.sampleRate);
+  const nd=noiseBuf.getChannelData(0);
+  for(let i=0;i<nd.length;i++) nd[i]=(Math.random()*2-1)*Math.exp(-i/nd.length*4);
+  const noiseSrc=audioCtx.createBufferSource();
+  noiseSrc.buffer=noiseBuf;
+  const noiseShaper=audioCtx.createWaveShaper();
+  const curve=new Float32Array(256);
+  for(let i=0;i<256;i++){ const x=i/128-1; curve[i]=Math.tanh(x*4); }
+  noiseShaper.curve=curve;
+  const noiseGain=audioCtx.createGain();
+  noiseGain.gain.value=1.0;
+  noiseSrc.connect(noiseShaper); noiseShaper.connect(noiseGain); noiseGain.connect(master);
+  noiseSrc.start(t0);
+
+  // 2) Пронзительный вопль — две расстроенные пилообразные волны, скользящие вниз по частоте
+  for(const detune of [-14,10]){
+    const osc=audioCtx.createOscillator();
+    osc.type='sawtooth';
+    osc.frequency.setValueAtTime(1400,t0);
+    osc.frequency.exponentialRampToValueAtTime(140,t0+0.55);
+    osc.detune.value=detune;
+    const oGain=audioCtx.createGain();
+    oGain.gain.setValueAtTime(0.0001,t0);
+    oGain.gain.exponentialRampToValueAtTime(0.9,t0+0.04);
+    oGain.gain.exponentialRampToValueAtTime(0.0001,t0+0.6);
+    osc.connect(oGain); oGain.connect(master);
+    osc.start(t0); osc.stop(t0+0.65);
+  }
+
+  // 3) Низкий гортанный рык (под скримером)
+  const growl=audioCtx.createOscillator();
+  growl.type='square';
+  growl.frequency.setValueAtTime(90,t0);
+  growl.frequency.linearRampToValueAtTime(55,t0+0.5);
+  const gGain=audioCtx.createGain();
+  gGain.gain.setValueAtTime(0.5,t0);
+  gGain.gain.linearRampToValueAtTime(0.0001,t0+0.55);
+  growl.connect(gGain); gGain.connect(master);
+  growl.start(t0); growl.stop(t0+0.6);
 }
 
 // ═══════════════════════════════════════════
@@ -1949,34 +2018,67 @@ function animate(){
 }
 
 // Полёт монстра в лицо камере во время скримера
+const HOLD_SEC=HOLD_DUR/1000;
 function updateJumpscare(dt){
-  if(!jumpscareActive||jumpscarePhase!=='fly') return;
-  jumpscareT=Math.min(1,jumpscareT+dt*2.2);
-  const e=1-Math.pow(1-jumpscareT,3); // ease-out
-  // Целевая точка — прямо перед камерой
+  if(!jumpscareActive||!shadowEntity) return;
   const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-  const targetPos=camera.position.clone().addScaledVector(fwd, 0.4+0.9*(1-e));
-  targetPos.y-=0.15;
-  if(shadowEntity){
+  const parts=shadowEntity.userData.parts;
+
+  if(jumpscarePhase==='fly'){
+    // Монстр резко вылетает из темноты прямо на камеру (быстро, агрессивно)
+    jumpscareT=Math.min(1,jumpscareT+dt*(1000/FLY_DUR));
+    const e=1-Math.pow(1-jumpscareT,2.2); // резкий ease-out
+    const targetPos=camera.position.clone().addScaledVector(fwd, 0.32);
+    targetPos.y-=0.05;
     shadowEntity.position.lerpVectors(
       new THREE.Vector3(monsterStartPos.x,0.9,monsterStartPos.z), targetPos, e);
     shadowEntity.lookAt(camera.position.x,camera.position.y,camera.position.z);
-    shadowEntity.scale.setScalar(1+e*1.4);
-    const parts=shadowEntity.userData.parts;
-    if(parts) parts.jaw.rotation.x=Math.sin(jumpscareT*Math.PI)*0.9;
+    shadowEntity.scale.setScalar(1+e*3.8); // заполняет 70-90% экрана вблизи
+    if(parts) parts.jaw.rotation.x=e*1.1;
+  } else if(jumpscarePhase==='hold'){
+    // Держится на экране с открытым ртом и агрессивной анимацией (тряска головы, щёлканье челюстью)
+    jumpscareT=Math.min(1,jumpscareT+dt/HOLD_SEC);
+    const targetPos=camera.position.clone().addScaledVector(fwd, 0.32);
+    targetPos.y-=0.05;
+    const jitter=Math.sin(jumpscareT*70)*0.012;
+    shadowEntity.position.set(targetPos.x+jitter, targetPos.y+Math.abs(Math.sin(jumpscareT*40))*0.02, targetPos.z);
+    shadowEntity.lookAt(camera.position.x,camera.position.y,camera.position.z);
+    shadowEntity.scale.setScalar(4.8);
+    if(parts){
+      parts.jaw.rotation.x=1.0+Math.sin(jumpscareT*55)*0.25;
+      parts.armL.rotation.x=Math.sin(jumpscareT*30)*0.8-0.4;
+      parts.armR.rotation.x=-Math.sin(jumpscareT*30)*0.8-0.4;
+      parts.head.rotation.z=Math.sin(jumpscareT*60)*0.08;
+    }
   }
-  if(jumpscareT>=1){ jumpscarePhase='hold'; shadowEntity && shadowEntity.scale.setScalar(2.4); }
 }
 
 // Восстановление после обморока: игрок медленно "приходит в себя"
 function updateRevive(dt){
   if(!reviving) return;
-  reviveT=Math.min(1,reviveT+dt/1.3);
-  camera.position.y=0.3+ (EYE-0.3)*reviveT;
+  reviveT=Math.min(1,reviveT+dt/2.2);
+  // Камера медленно поднимается с пола (анимация вставания)
+  const riseT=Math.min(1,reviveT/0.85);
+  const ease=1-Math.pow(1-riseT,2);
+  camera.position.y=0.28+(EYE-0.28)*ease;
+  // Зрение постепенно проясняется: мерцающее размытие, убывающее со временем
   const wb=document.getElementById('wake-blur');
-  wb.style.backdropFilter=`blur(${(1-reviveT)*14}px)`;
-  wb.style.webkitBackdropFilter=`blur(${(1-reviveT)*14}px)`;
-  if(reviveT>=1){ reviving=false; camera.position.y=EYE; wb.style.backdropFilter='blur(0px)'; wb.style.webkitBackdropFilter='blur(0px)'; }
+  const flicker=Math.random()<0.15 ? 1.4 : 1;
+  const blurAmt=Math.max(0,(1-reviveT))*14*flicker;
+  wb.style.backdropFilter=`blur(${blurAmt}px)`;
+  wb.style.webkitBackdropFilter=`blur(${blurAmt}px)`;
+  wb.style.background=`rgba(0,0,0,${Math.max(0,(1-reviveT)*0.35)})`;
+  // Свет в комнате постепенно включается с мерцанием ламп
+  const lightT=Math.min(1,reviveT/0.9);
+  const flick2=0.7+0.3*Math.sin(performance.now()*.02)+(Math.random()<0.1?-0.4:0);
+  roomPL.intensity=reviveLightTarget*lightT*Math.max(0.15,flick2);
+  if(reviveT>=1){
+    reviving=false;
+    camera.position.y=EYE;
+    wb.style.backdropFilter='blur(0px)'; wb.style.webkitBackdropFilter='blur(0px)';
+    wb.style.background='rgba(0,0,0,0)';
+    roomPL.intensity=reviveLightTarget;
+  }
 }
 
 window.addEventListener('resize',()=>{
