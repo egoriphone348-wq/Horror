@@ -549,136 +549,78 @@ scene.add(camera);
 // ═══════════════════════════════════════════
 //  ПЕРВОЕ ЛИЦО — РУКИ ИГРОКА
 // ═══════════════════════════════════════════
+// Группа для покачивания (bob при ходьбе)
 const handsGroup=new THREE.Group();
 camera.add(handsGroup);
 
-// Материалы рук — MeshStandardMaterial для корректного отображения при любом освещении
-const skinMat=new THREE.MeshStandardMaterial({color:0xd4956a,roughness:.85,metalness:0});
-const skinShadeMat=new THREE.MeshStandardMaterial({color:0xbc7d52,roughness:.9,metalness:0});
-const sleeveMat=new THREE.MeshStandardMaterial({color:0x1e2226,roughness:.9,metalness:.05});
-const knuckleMat=new THREE.MeshStandardMaterial({color:0xc4855a,roughness:.8,metalness:0});
+// ═══════════════════════════════════════════
+//  ФОНАРИК — единственный видимый объект
+//  Расположен в правом нижнем углу экрана
+// ═══════════════════════════════════════════
+const flashGroup=new THREE.Group();
+flashGroup.position.set(0.21, -0.26, -0.38);
+flashGroup.rotation.set(0.08, -0.18, 0.06);
+handsGroup.add(flashGroup);
 
-// Постоянный слабый свет для рук — прикреплён к камере, всегда виден независимо от фонарика
-const handFillLight=new THREE.PointLight(0xffd8b0, 0.55, 1.4, 2);
-handFillLight.position.set(0, -0.15, -0.35);
-camera.add(handFillLight);
+// Основной корпус фонарика (металлический цилиндр)
+const flashBodyMat=new THREE.MeshStandardMaterial({color:0x1c1c1c,metalness:.85,roughness:.25});
+const flashBodyMesh=new THREE.Mesh(new THREE.CylinderGeometry(.024,.030,.26,14),flashBodyMat);
+flashBodyMesh.rotation.x=Math.PI/2;
+flashGroup.add(flashBodyMesh);
 
-// Рука игрока: рукав + запястье + ладонь + 4 пальца + большой палец
-function makeArm(isLeft){
-  const g=new THREE.Group();
-  const sign=isLeft?-1:1;
-
-  // Рукав — цилиндр, уходящий назад (не виден игроку)
-  const sleeve=new THREE.Mesh(new THREE.CylinderGeometry(.072,.088,.38,12),sleeveMat);
-  sleeve.rotation.x=Math.PI/2; sleeve.position.z=.06; g.add(sleeve);
-
-  // Предплечье — переход к коже
-  const forearm=new THREE.Mesh(new THREE.CylinderGeometry(.058,.072,.14,10),skinMat);
-  forearm.rotation.x=Math.PI/2; forearm.position.z=-.10; g.add(forearm);
-
-  const hand=new THREE.Group();
-  hand.position.set(0, .0, .22);
-  g.add(hand);
-
-  // Запястье
-  const wrist=new THREE.Mesh(new THREE.SphereGeometry(.058,10,8),skinMat);
-  wrist.scale.set(1,.78,1.1); wrist.position.z=-.10; hand.add(wrist);
-
-  // Ладонь — широкая приплюснутая форма
-  const palm=new THREE.Mesh(new THREE.SphereGeometry(.072,14,10),skinMat);
-  palm.scale.set(1.35,.65,1.3);
-  hand.add(palm);
-
-  // Суставы костяшек поверх ладони
-  const knuckleXs=[-0.042,-0.014,0.014,0.042];
-  for(const kx of knuckleXs){
-    const k=new THREE.Mesh(new THREE.SphereGeometry(.013,6,5),knuckleMat);
-    k.position.set(kx,.028,.072); hand.add(k);
-  }
-
-  // 4 пальца
-  const fingerDefs=[
-    {len:.095, rad:.0165, x:-.044, spread:-.22, tilt:-.06, name:'index'},
-    {len:.110, rad:.018,  x:-.015, spread:-.06, tilt:-.02, name:'middle'},
-    {len:.105, rad:.0175, x:.015,  spread:.07,  tilt:0,    name:'ring'},
-    {len:.088, rad:.016,  x:.044,  spread:.22,  tilt:.06,  name:'pinky'},
-  ];
-  for(const f of fingerDefs){
-    // Основная фаланга
-    const f1=new THREE.Mesh(new THREE.CapsuleGeometry(f.rad,f.len*.45,4,8),skinMat);
-    f1.position.set(f.x, .008, .095+f.len*.18);
-    f1.rotation.x=-Math.PI/2+f.tilt;
-    f1.rotation.z=f.spread*sign*-1;
-    hand.add(f1);
-    // Средняя фаланга
-    const f2=new THREE.Mesh(new THREE.CapsuleGeometry(f.rad*.88,f.len*.38,4,7),skinShadeMat);
-    f2.position.set(f.x+f.spread*sign*-.01, .007, .095+f.len*.58);
-    f2.rotation.x=-Math.PI/2+f.tilt*.5;
-    f2.rotation.z=f.spread*sign*-1;
-    hand.add(f2);
-    // Ногтевая фаланга
-    const f3=new THREE.Mesh(new THREE.CapsuleGeometry(f.rad*.76,f.len*.28,4,6),skinShadeMat);
-    f3.position.set(f.x+f.spread*sign*-.02, .005, .095+f.len*.82);
-    f3.rotation.x=-Math.PI/2+f.tilt*.3;
-    f3.rotation.z=f.spread*sign*-1;
-    hand.add(f3);
-  }
-
-  // Большой палец — отставлен в сторону, 2 фаланги
-  const th1=new THREE.Mesh(new THREE.CapsuleGeometry(.022,.062,4,7),skinMat);
-  th1.position.set(sign*-.082,-.004,.020);
-  th1.rotation.z=sign*1.45;
-  th1.rotation.y=sign*.4;
-  hand.add(th1);
-  const th2=new THREE.Mesh(new THREE.CapsuleGeometry(.019,.050,4,6),skinShadeMat);
-  th2.position.set(sign*-.098,-.004,.060);
-  th2.rotation.z=sign*1.3;
-  th2.rotation.y=sign*.5;
-  hand.add(th2);
-
-  g.userData.hand=hand;
-  return g;
+// Насечки на рукоятке (3 тонких кольца)
+const gripMat=new THREE.MeshStandardMaterial({color:0x0d0d0d,metalness:.7,roughness:.6});
+for(let i=0;i<3;i++){
+  const ring=new THREE.Mesh(new THREE.CylinderGeometry(.031,.031,.011,14),gripMat);
+  ring.rotation.x=Math.PI/2;
+  ring.position.z=0.05+i*0.032;
+  flashGroup.add(ring);
 }
 
-const leftArm=makeArm(true);
-leftArm.position.set(-.28,-.32,-.42);
-leftArm.rotation.y=.12;
-handsGroup.add(leftArm);
+// Головка фонарика (расширяется к линзе)
+const flashHeadMat=new THREE.MeshStandardMaterial({color:0x141414,metalness:.9,roughness:.2});
+const flashHeadMesh=new THREE.Mesh(new THREE.CylinderGeometry(.040,.025,.065,14),flashHeadMat);
+flashHeadMesh.rotation.x=Math.PI/2;
+flashHeadMesh.position.z=-0.155;
+flashGroup.add(flashHeadMesh);
 
-// Фонарик в левой руке — всегда виден, зажат в кулаке
-const flashMesh=new THREE.Group();
-const flashBody=new THREE.Mesh(new THREE.CylinderGeometry(.028,.034,.19,10),
-  new THREE.MeshStandardMaterial({color:0x333333,metalness:.7,roughness:.35}));
-flashBody.rotation.x=Math.PI/2; flashMesh.add(flashBody);
-const flashHead=new THREE.Mesh(new THREE.CylinderGeometry(.038,.03,.05,10),
-  new THREE.MeshStandardMaterial({color:0x222222,metalness:.8,roughness:.3}));
-flashHead.position.z=-.11; flashHead.rotation.x=Math.PI/2; flashMesh.add(flashHead);
-const flashLens=new THREE.Mesh(new THREE.CircleGeometry(.028,10),
-  new THREE.MeshBasicMaterial({color:0xfff2c0}));
-flashLens.position.z=-.135; flashMesh.add(flashLens);
-flashMesh.position.copy(leftArm.userData.hand.position);
-flashMesh.position.z+=.16;
-flashMesh.position.y+=.01;
-flashMesh.rotation.x=-.15;
-leftArm.add(flashMesh);
+// Ободок линзы
+const rimMat=new THREE.MeshStandardMaterial({color:0x3a3a3a,metalness:.95,roughness:.15});
+const rimMesh=new THREE.Mesh(new THREE.TorusGeometry(.038,.006,8,14),rimMat);
+rimMesh.position.z=-0.188;
+flashGroup.add(rimMesh);
 
-const rightArm=makeArm(false);
-rightArm.position.set(.28,-.32,-.42);
-rightArm.rotation.y=-.12;
-handsGroup.add(rightArm);
+// Линза — светится всегда через MeshBasicMaterial (не зависит от освещения)
+// Яркость линзы меняется вместе с torch
+const lensMatOff=new THREE.MeshBasicMaterial({color:0x222222});
+const lensMatOn =new THREE.MeshBasicMaterial({color:0xfff5bb});
+const lensMesh=new THREE.Mesh(new THREE.CircleGeometry(.032,14),lensMatOff);
+lensMesh.position.z=-0.190;
+flashGroup.add(lensMesh);
 
+// SpotLight теперь исходит из позиции линзы фонарика, а не из центра камеры
+torch.position.set(0.21, -0.26, -0.55);   // совпадает с кончиком линзы в пространстве камеры
+torchFill.position.set(0.18, -0.22, -0.45);
+
+// Обновляем линзу при изменении torch.intensity (вызывается в двух местах — патчим через функцию)
+function applyTorchState(on){
+  torch.intensity   = on ? TORCH_MAX : 0;
+  torchFill.intensity = on ? TORCH_MAX*0.18 : 0;
+  lensMesh.material = on ? lensMatOn : lensMatOff;
+}
+
+// Предметы крепятся к группе фонарика (рядом, слева от него)
 let heldItemMesh=null;
 function setHeldItem(name){
-  if(heldItemMesh){ rightArm.remove(heldItemMesh); heldItemMesh=null; }
+  if(heldItemMesh){ flashGroup.remove(heldItemMesh); heldItemMesh=null; }
   if(!name) return;
   const geo=itemGeometry(name);
   const mat=makeItemMaterial(name);
   const mesh=new THREE.Mesh(geo,mat);
-  mesh.scale.setScalar(0.55);
-  mesh.position.copy(rightArm.userData.hand.position);
-  mesh.position.z+=.1;
+  mesh.scale.setScalar(0.50);
+  mesh.position.set(-0.12, 0.04, 0.0);
   mesh.rotation.set(.3,.4,0);
-  rightArm.add(mesh);
+  flashGroup.add(mesh);
   heldItemMesh=mesh;
 }
 
@@ -1381,8 +1323,7 @@ function startGenerator(){
 // ═══════════════════════════════════════════
 function toggleFlash(forceOn){
   gs.flashOn = forceOn!==undefined ? forceOn : !gs.flashOn;
-  torch.intensity = gs.flashOn ? TORCH_MAX : 0;
-  torchFill.intensity = gs.flashOn ? TORCH_MAX*0.18 : 0;
+  applyTorchState(gs.flashOn);
   document.getElementById('flashlight-icon').textContent = gs.flashOn ? '🔦 включён' : '🔦 выключен';
   document.getElementById('flashlight-icon').style.color = gs.flashOn ? '#ffdd88' : '#333';
   if(forceOn===undefined) msg(gs.flashOn ? '🔦 Фонарик включён.' : '🔦 Фонарик выключен.');
@@ -2242,8 +2183,7 @@ document.getElementById('start-btn').addEventListener('click',()=>{
   buildDungeon();
   gs.visited.add('вход');
   // Фонарик включён с самого начала
-  torch.intensity = gs.flashOn ? TORCH_MAX : 0;
-  torchFill.intensity = gs.flashOn ? TORCH_MAX*0.18 : 0;
+  applyTorchState(gs.flashOn);
   document.getElementById('flashlight-icon').textContent = '🔦 включён';
   document.getElementById('flashlight-icon').style.color = '#ffdd88';
   updateHUD();
@@ -2295,6 +2235,7 @@ function animate(){
     const flick=1+(Math.random()-0.5)*0.05+Math.sin(now*.011)*0.02;
     torch.intensity=TORCH_MAX*flick;
     torchFill.intensity=TORCH_MAX*0.18*flick;
+    lensMesh.material=lensMatOn;
   }
   // Капающая вода
   for(const d of dripDrops){
