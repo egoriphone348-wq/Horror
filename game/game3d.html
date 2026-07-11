@@ -1620,6 +1620,8 @@ function updateEntity(dt){
   if(pdist<7 && Math.random()<0.012) msg(NEAR_MSGS[Math.floor(Math.random()*NEAR_MSGS.length)],3000);
   // Ложный скример: монстр далеко, фонарик выключен, тёмная комната → внезапный удар
   if(pdist>12 && !gs.flashOn && Math.random()<0.0018) triggerFalseScare();
+  // Галлюцинация: при низком рассудке монстр мерещится на долю секунды
+  if(gs.sanity<45 && pdist>8 && Math.random()<0.0012) triggerFlashScare();
 }
 
 // ═══════════════════════════════════════════
@@ -1648,51 +1650,100 @@ function triggerFalseScare(){
 // ═══════════════════════════════════════════
 //  СКРИМЕР + ОБМОРОК + РЕСПАВН
 // ═══════════════════════════════════════════
-const FLY_DUR=320;   // мс — монстр резко вылетает на камеру
-const HOLD_DUR=800;  // мс — держится на экране (0.6-1с)
-const FADE_DUR=230;  // мс — быстрый fade to black
+let activeFlyDur=320;        // мс — меняется по типу скримера
+let activeHoldDur=800;
+const FADE_DUR=230;
+let currentScareType='normal'; // 'normal' | 'slow' | 'audio'
+
+// Мгновенная галлюцинация: монстр мелькает на 200мс без обморока
+function triggerFlashScare(){
+  if(jumpscareActive||!shadowEntity||!gs.entityActive) return;
+  jumpscareActive=true;
+  gs.sanity=Math.max(0,gs.sanity-7);
+  playScreech();
+  triggerCameraShake(1.2,0.32);
+  const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  const pos=camera.position.clone().addScaledVector(fwd,0.5);
+  shadowEntity.position.copy(pos); shadowEntity.position.y-=0.05;
+  shadowEntity.lookAt(camera.position.x,camera.position.y,camera.position.z);
+  shadowEntity.scale.setScalar(3.5); shadowEntity.visible=true;
+  const noise=document.getElementById('static-noise');
+  noise.style.transition='opacity .04s'; noise.style.opacity='0.65';
+  setTimeout(()=>{
+    shadowEntity.visible=false;
+    noise.style.transition='opacity .3s'; noise.style.opacity='0';
+    jumpscareActive=false; jumpscarePhase=null;
+    updateHUD();
+  },210);
+}
 
 function encounter(){
   if(jumpscareActive) return;
   jumpscareActive=true;
   gs.entityEncounters++;
-  const drain=20+gs.entityEncounters*5;
-  gs.sanity=Math.max(0,gs.sanity-drain);
+  gs.sanity=Math.max(0,gs.sanity-(20+gs.entityEncounters*5));
   unlockPointer();
-  // Тихий скрип-предвестник → пауза → ГЛАВНЫЙ УДАР точно в момент когда монстр достигает лица
-  playPreScare();
-  setTimeout(()=>playScare(), FLY_DUR-55);
-  triggerCameraShake(1.6,(FLY_DUR+HOLD_DUR)/1000);
+
+  // ── Выбор типа скримера ──────────────────
+  // Первый встреченный всегда обычный — знакомит игрока с механикой
+  const roll=Math.random();
+  if(gs.entityEncounters===1||roll<0.50){ currentScareType='normal'; activeFlyDur=320;  activeHoldDur=800; }
+  else if(roll<0.75){                     currentScareType='slow';   activeFlyDur=1400; activeHoldDur=600; }
+  else{                                   currentScareType='audio';  activeFlyDur=0;    activeHoldDur=380; }
+
   monsterStartPos.copy(monsterPos);
-  jumpscarePhase='fly';
+  jumpscarePhase=(currentScareType==='audio')?'hold':'fly';
   jumpscareT=0;
-  if(shadowEntity) shadowEntity.visible=true;
 
-  // Красная вспышка удара — короткая, 0.2-0.3с
   const red=document.getElementById('red-flash');
-  red.style.transition='opacity .05s';
-  red.style.opacity='1';
-  setTimeout(()=>{ red.style.transition='opacity .22s'; red.style.opacity='0'; },250);
-
-  // Статический шум/зерно — нарастает во время полёта, пик во время удержания
   const noise=document.getElementById('static-noise');
-  noise.style.transition=`opacity ${FLY_DUR}ms`;
-  noise.style.opacity='0.85';
 
-  // Переход в фазу удержания на экране
-  setTimeout(()=>{ jumpscarePhase='hold'; jumpscareT=0; }, FLY_DUR);
+  if(currentScareType==='normal'){
+    // ── Обычный: резкий вылет + скрип-предвестник ──
+    if(shadowEntity){ shadowEntity.visible=true; shadowEntity.scale.setScalar(1); }
+    playPreScare();
+    setTimeout(()=>playScare(), activeFlyDur-55);
+    triggerCameraShake(1.6,(activeFlyDur+activeHoldDur)/1000);
+    red.style.transition='opacity .05s'; red.style.opacity='1';
+    setTimeout(()=>{ red.style.transition='opacity .22s'; red.style.opacity='0'; },250);
+    noise.style.transition=`opacity ${activeFlyDur}ms`; noise.style.opacity='0.85';
 
-  // Быстрый fade to black после удержания
+  } else if(currentScareType==='slow'){
+    // ── Медленный: нарастающий дрон, монстр выходит из темноты ──
+    if(shadowEntity){ shadowEntity.visible=true; shadowEntity.scale.setScalar(0.5); }
+    playSlowScare();
+    triggerCameraShake(0.4, activeFlyDur/1000);
+    // Главный удар — в момент достижения лица
+    setTimeout(()=>{ playScare(); triggerCameraShake(2.0,0.95); }, activeFlyDur-80);
+    noise.style.transition=`opacity ${activeFlyDur}ms`; noise.style.opacity='0.38';
+    red.style.transition=`opacity ${activeFlyDur*0.6}ms`; red.style.opacity='0.14';
+    setTimeout(()=>{ red.style.transition='opacity .25s'; red.style.opacity='0'; },activeFlyDur+140);
+
+  } else {
+    // ── Только аудио: монстр невидим, экран вспыхивает белым ──
+    if(shadowEntity) shadowEntity.visible=false;
+    playAudioScare();
+    triggerCameraShake(2.5,0.95);
+    red.style.background='#ffffff';
+    red.style.transition='opacity .03s'; red.style.opacity='1';
+    setTimeout(()=>{
+      red.style.transition='opacity .55s'; red.style.opacity='0';
+      setTimeout(()=>{ red.style.background=''; },750);
+    },65);
+    noise.style.transition='opacity .06s'; noise.style.opacity='1.0';
+    setTimeout(()=>{ noise.style.transition='opacity .4s'; noise.style.opacity='0'; },420);
+  }
+
+  // ── Общие: hold-переход, fade-to-black, respawn ──
+  if(currentScareType!=='audio'){
+    setTimeout(()=>{ jumpscarePhase='hold'; jumpscareT=0; }, activeFlyDur);
+  }
   setTimeout(()=>{
     const fo=document.getElementById('faint-overlay');
-    fo.style.transition=`opacity ${FADE_DUR}ms`;
-    fo.style.opacity='1';
-    noise.style.transition='opacity .15s';
-    noise.style.opacity='0';
-  }, FLY_DUR+HOLD_DUR);
-
-  // Respawn
-  setTimeout(()=>{ respawnPlayer(); }, FLY_DUR+HOLD_DUR+FADE_DUR+80);
+    fo.style.transition=`opacity ${FADE_DUR}ms`; fo.style.opacity='1';
+    noise.style.transition='opacity .15s'; noise.style.opacity='0';
+  }, activeFlyDur+activeHoldDur);
+  setTimeout(()=>{ respawnPlayer(); }, activeFlyDur+activeHoldDur+FADE_DUR+80);
   updateHUD();
 }
 
@@ -1937,6 +1988,60 @@ function screamStop(){
     if(ruVoice) u.voice=ruVoice;
     speechSynthesis.speak(u);
   }catch(e){}
+}
+
+// Нарастающий жуткий дрон для медленного скримера
+function playSlowScare(){
+  if(!audioCtx) return;
+  const t0=audioCtx.currentTime, dur=1.35;
+  for(const [freq,det] of [[65,-8],[82,12],[55,0]]){
+    const osc=audioCtx.createOscillator();
+    osc.type='sawtooth'; osc.frequency.value=freq; osc.detune.value=det;
+    const g=audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.linearRampToValueAtTime(0.32,t0+dur);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(t0); osc.stop(t0+dur+0.1);
+  }
+  const osc2=audioCtx.createOscillator();
+  osc2.type='sawtooth';
+  osc2.frequency.setValueAtTime(800,t0);
+  osc2.frequency.linearRampToValueAtTime(2600,t0+dur);
+  const g2=audioCtx.createGain();
+  g2.gain.setValueAtTime(0.0001,t0);
+  g2.gain.linearRampToValueAtTime(0.13,t0+dur*0.8);
+  g2.gain.setValueAtTime(0.0001,t0+dur);
+  osc2.connect(g2); g2.connect(audioCtx.destination);
+  osc2.start(t0); osc2.stop(t0+dur+0.05);
+}
+
+// Только-аудио скример — максимальная громкость + жёсткий дисторшн
+function playAudioScare(){
+  if(!audioCtx) return;
+  const t0=audioCtx.currentTime;
+  const shaper=audioCtx.createWaveShaper();
+  const curve=new Float32Array(512);
+  for(let i=0;i<512;i++){ const x=i/256-1; curve[i]=Math.tanh(x*8); }
+  shaper.curve=curve;
+  const masterG=audioCtx.createGain(); masterG.gain.value=1.8;
+  shaper.connect(masterG); masterG.connect(audioCtx.destination);
+  const buf=audioCtx.createBuffer(1,Math.floor(audioCtx.sampleRate*0.65),audioCtx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/d.length*3);
+  const src=audioCtx.createBufferSource(); src.buffer=buf;
+  src.connect(shaper); src.start(t0);
+  for(const [freq,det] of [[1600,-20],[1850,15],[1200,0]]){
+    const osc=audioCtx.createOscillator();
+    osc.type='sawtooth'; osc.frequency.setValueAtTime(freq,t0);
+    osc.frequency.exponentialRampToValueAtTime(120,t0+0.7);
+    osc.detune.value=det;
+    const g=audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(0.7,t0+0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+0.75);
+    osc.connect(g); g.connect(shaper);
+    osc.start(t0); osc.stop(t0+0.8);
+  }
 }
 
 // Тихий скрип/выдох — за долю секунды до главного удара (нагнетает ужас)
@@ -2385,33 +2490,52 @@ function animate(){
   drawMinimap();
 }
 
-// Полёт монстра в лицо камере во время скримера
-const HOLD_SEC=HOLD_DUR/1000;
+// Полёт/удержание монстра — поведение зависит от типа скримера
 function updateJumpscare(dt){
-  if(!jumpscareActive||!shadowEntity) return;
+  if(!jumpscareActive) return;
+  if(currentScareType==='audio') return; // монстр невидим
+  if(!shadowEntity) return;
+
   const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
   const parts=shadowEntity.userData.parts;
 
   if(jumpscarePhase==='fly'){
-    // Монстр резко вылетает из темноты прямо на камеру (быстро, агрессивно)
-    jumpscareT=Math.min(1,jumpscareT+dt*(1000/FLY_DUR));
-    const e=1-Math.pow(1-jumpscareT,2.2); // резкий ease-out
-    const targetPos=camera.position.clone().addScaledVector(fwd, 0.32);
+    jumpscareT=Math.min(1,jumpscareT+dt*(1000/activeFlyDur));
+    const targetPos=camera.position.clone().addScaledVector(fwd,0.32);
     targetPos.y-=0.05;
-    shadowEntity.position.lerpVectors(
-      new THREE.Vector3(monsterStartPos.x,0.9,monsterStartPos.z), targetPos, e);
-    shadowEntity.lookAt(camera.position.x,camera.position.y,camera.position.z);
-    shadowEntity.scale.setScalar(1+e*3.8); // заполняет 70-90% экрана вблизи
-    if(parts) parts.jaw.rotation.x=e*1.1;
+
+    if(currentScareType==='slow'){
+      // Медленный: линейное движение + лёгкое покачивание — неотвратимо и жутко
+      const e=jumpscareT;
+      shadowEntity.position.lerpVectors(
+        new THREE.Vector3(monsterStartPos.x,0.9,monsterStartPos.z), targetPos, e);
+      shadowEntity.lookAt(camera.position.x,camera.position.y,camera.position.z);
+      shadowEntity.scale.setScalar(0.5+e*4.0);
+      if(parts){
+        parts.jaw.rotation.x=e*0.7+Math.sin(jumpscareT*6)*0.12;
+        parts.armL.rotation.x=Math.sin(jumpscareT*5)*0.35;
+        parts.armR.rotation.x=-Math.sin(jumpscareT*5)*0.35;
+        parts.head.rotation.z=Math.sin(jumpscareT*4)*0.06;
+      }
+    } else {
+      // Обычный: резкий ease-out — агрессивный рывок
+      const e=1-Math.pow(1-jumpscareT,2.2);
+      shadowEntity.position.lerpVectors(
+        new THREE.Vector3(monsterStartPos.x,0.9,monsterStartPos.z), targetPos, e);
+      shadowEntity.lookAt(camera.position.x,camera.position.y,camera.position.z);
+      shadowEntity.scale.setScalar(1+e*3.8);
+      if(parts) parts.jaw.rotation.x=e*1.1;
+    }
+
   } else if(jumpscarePhase==='hold'){
-    // Держится на экране с открытым ртом и агрессивной анимацией (тряска головы, щёлканье челюстью)
-    jumpscareT=Math.min(1,jumpscareT+dt/HOLD_SEC);
-    const targetPos=camera.position.clone().addScaledVector(fwd, 0.32);
+    const holdSec=activeHoldDur/1000;
+    jumpscareT=Math.min(1,jumpscareT+dt/holdSec);
+    const targetPos=camera.position.clone().addScaledVector(fwd,0.32);
     targetPos.y-=0.05;
     const jitter=Math.sin(jumpscareT*70)*0.012;
     shadowEntity.position.set(targetPos.x+jitter, targetPos.y+Math.abs(Math.sin(jumpscareT*40))*0.02, targetPos.z);
     shadowEntity.lookAt(camera.position.x,camera.position.y,camera.position.z);
-    shadowEntity.scale.setScalar(4.8);
+    shadowEntity.scale.setScalar(currentScareType==='slow'?5.2:4.8);
     if(parts){
       parts.jaw.rotation.x=1.0+Math.sin(jumpscareT*55)*0.25;
       parts.armL.rotation.x=Math.sin(jumpscareT*30)*0.8-0.4;
