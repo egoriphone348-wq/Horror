@@ -882,6 +882,26 @@ function buildDungeon() {
   shadowEntity = buildShadow();
   shadowEntity.visible = false;
   scene.add(shadowEntity);
+
+  // ── Силуэт в дверном проёме ──────────────
+  doorSilMat = new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0,depthWrite:false});
+  doorwaySilhouette = new THREE.Group();
+  const _sm=doorSilMat;
+  const _mk=(geo)=>new THREE.Mesh(geo,_sm);
+  const _dHead=_mk(new THREE.SphereGeometry(.21,8,6));   _dHead.position.set(0,1.73,0);
+  const _dNeck=_mk(new THREE.CylinderGeometry(.085,.095,.17,6)); _dNeck.position.set(0,1.51,0);
+  const _dTorso=_mk(new THREE.BoxGeometry(.50,.72,.15)); _dTorso.position.set(0,1.04,0);
+  for(const s of [-1,1]){
+    const _a=_mk(new THREE.CylinderGeometry(.060,.050,.82,5));
+    _a.position.set(s*.34,.86,0); _a.rotation.z=s*.28; doorwaySilhouette.add(_a);
+  }
+  for(const s of [-1,1]){
+    const _l=_mk(new THREE.CylinderGeometry(.082,.072,.74,5));
+    _l.position.set(s*.13,.36,0); doorwaySilhouette.add(_l);
+  }
+  doorwaySilhouette.add(_dHead,_dNeck,_dTorso);
+  doorwaySilhouette.visible=false;
+  scene.add(doorwaySilhouette);
   monsterLight = new THREE.PointLight(0xff2200, 1.4, 6, 2);
   monsterLight.position.set(0,1.6,0);
   scene.add(monsterLight);
@@ -1428,8 +1448,11 @@ const monsterFacing=new THREE.Vector2(0,1);
 let monsterStepTimer=0;
 let playerStepAccum=0;
 let lastScreamerCheck=0;
-let chaseFlickerTimer=0;    // секунды паники ламп при начале погони
-let falseScareCooldown=0;   // кулдаун между ложными скримерами (секунды)
+let chaseFlickerTimer=0;
+let falseScareCooldown=0;
+// Силуэт в дверях
+let doorSilMat=null, doorwaySilhouette=null;
+let doorSilTimer=0, doorSilDuration=3.5, doorSilCooldown=0;
 
 function activateEntity(){
   const cands=Object.keys(ROOMS).filter(r=>!SAFE_ROOMS.has(r)&&r!==gs.room);
@@ -1622,6 +1645,38 @@ function updateEntity(dt){
   if(pdist>12 && !gs.flashOn && Math.random()<0.0018) triggerFalseScare();
   // Галлюцинация: при низком рассудке монстр мерещится на долю секунды
   if(gs.sanity<45 && pdist>8 && Math.random()<0.0012) triggerFlashScare();
+  // Силуэт в дверном проёме — только при патруле, монстр не рядом
+  if(monsterState==='patrol' && pdist>10 && doorSilTimer<=0 && doorSilCooldown<=0 && Math.random()<0.0009)
+    showDoorwaySilhouette();
+}
+
+// ═══════════════════════════════════════════
+//  СИЛУЭТ В ДВЕРНОМ ПРОЁМЕ
+//  Тёмная фигура стоит в проёме соседней комнаты
+//  Поворачивается к игроку, плавно появляется и исчезает
+// ═══════════════════════════════════════════
+function showDoorwaySilhouette(){
+  if(!doorwaySilhouette||jumpscareActive) return;
+  const r=ROOMS[gs.room];
+  if(!r||!r.exits) return;
+  const exits=Object.entries(r.exits);
+  if(!exits.length) return;
+  const [dir]=exits[Math.floor(Math.random()*exits.length)];
+  const [cx,cz]=r.pos;
+  let sx=cx, sz=cz;
+  if     (dir==='north') sz=cz-RW/2-1.3;
+  else if(dir==='south') sz=cz+RW/2+1.3;
+  else if(dir==='east')  sx=cx+RW/2+1.3;
+  else if(dir==='west')  sx=cx-RW/2-1.3;
+  doorwaySilhouette.position.set(sx,0,sz);
+  const ddx=camera.position.x-sx, ddz=camera.position.z-sz;
+  doorwaySilhouette.rotation.y=Math.atan2(ddx,ddz);
+  doorwaySilhouette.visible=true;
+  if(doorSilMat) doorSilMat.opacity=0;
+  doorSilDuration=3.0+Math.random()*1.8;
+  doorSilTimer=doorSilDuration;
+  doorSilCooldown=22+Math.random()*22;
+  playCreak();
 }
 
 // ═══════════════════════════════════════════
@@ -1988,6 +2043,24 @@ function screamStop(){
     if(ruVoice) u.voice=ruVoice;
     speechSynthesis.speak(u);
   }catch(e){}
+}
+
+// Тихий скрип половицы / петли двери — появление силуэта
+function playCreak(){
+  if(!audioCtx) return;
+  const t0=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator();
+  osc.type='sawtooth';
+  osc.frequency.setValueAtTime(190,t0);
+  osc.frequency.exponentialRampToValueAtTime(58,t0+0.42);
+  const filt=audioCtx.createBiquadFilter();
+  filt.type='bandpass'; filt.frequency.value=380; filt.Q.value=3.2;
+  const g=audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(0.11,t0+0.07);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.48);
+  osc.connect(filt); filt.connect(g); g.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0+0.52);
 }
 
 // Нарастающий жуткий дрон для медленного скримера
@@ -2419,6 +2492,29 @@ function animate(){
     updateJumpscare(dt);
     updateRevive(dt);
     if(falseScareCooldown>0) falseScareCooldown-=dt;
+    if(doorSilCooldown>0)   doorSilCooldown-=dt;
+  }
+  // Силуэт — плавное появление/исчезновение и поворот к игроку
+  if(doorwaySilhouette && doorSilMat){
+    if(doorSilTimer>0){
+      doorSilTimer-=dt;
+      const elapsed=doorSilDuration-doorSilTimer;
+      const maxOp=0.88;
+      let op;
+      if(elapsed<0.55)          op=elapsed/0.55*maxOp;
+      else if(doorSilTimer<0.65) op=Math.max(0,doorSilTimer/0.65)*maxOp;
+      else                       op=maxOp;
+      doorSilMat.opacity=op;
+      // Поворачиваем к игроку только по Y-оси
+      const sdx=camera.position.x-doorwaySilhouette.position.x;
+      const sdz=camera.position.z-doorwaySilhouette.position.z;
+      doorwaySilhouette.rotation.y=Math.atan2(sdx,sdz);
+      // Очень медленное дыхание/покачивание
+      doorwaySilhouette.position.y=Math.sin(performance.now()*0.0008)*0.03;
+    } else if(doorSilMat.opacity>0){
+      doorSilMat.opacity=0;
+      doorwaySilhouette.visible=false;
+    }
   }
   // Анимация предметов
   for(const e of itemMeshes){
