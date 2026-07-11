@@ -555,58 +555,89 @@ camera.add(handsGroup);
 
 // ═══════════════════════════════════════════
 //  ФОНАРИК — единственный видимый объект
-//  Расположен в правом нижнем углу экрана
+//  Правый нижний угол; свет идёт строго из центра камеры
 // ═══════════════════════════════════════════
 const flashGroup=new THREE.Group();
-flashGroup.position.set(0.21, -0.26, -0.38);
-flashGroup.rotation.set(0.08, -0.18, 0.06);
+// Положение: правый нижний угол, чуть повёрнут как держат в руке
+flashGroup.position.set(0.19, -0.21, -0.32);
+flashGroup.rotation.set(0.12, -0.22, 0.08);
 handsGroup.add(flashGroup);
 
-// Основной корпус фонарика (металлический цилиндр)
-const flashBodyMat=new THREE.MeshStandardMaterial({color:0x1c1c1c,metalness:.85,roughness:.25});
-const flashBodyMesh=new THREE.Mesh(new THREE.CylinderGeometry(.024,.030,.26,14),flashBodyMat);
-flashBodyMesh.rotation.x=Math.PI/2;
-flashGroup.add(flashBodyMesh);
+// ── Материалы ──────────────────────────────
+const fBodyMat  =new THREE.MeshStandardMaterial({color:0x2b2b2b,metalness:.80,roughness:.30});
+const fAccentMat=new THREE.MeshStandardMaterial({color:0x111111,metalness:.70,roughness:.55});
+const fRimMat   =new THREE.MeshStandardMaterial({color:0x4a4a4a,metalness:.95,roughness:.10});
+const fRubberMat=new THREE.MeshStandardMaterial({color:0x181818,metalness:.05,roughness:.95});
 
-// Насечки на рукоятке (3 тонких кольца)
-const gripMat=new THREE.MeshStandardMaterial({color:0x0d0d0d,metalness:.7,roughness:.6});
-for(let i=0;i<3;i++){
-  const ring=new THREE.Mesh(new THREE.CylinderGeometry(.031,.031,.011,14),gripMat);
-  ring.rotation.x=Math.PI/2;
-  ring.position.z=0.05+i*0.032;
-  flashGroup.add(ring);
+// ── Хвостовая заглушка ─────────────────────
+const tailCap=new THREE.Mesh(new THREE.SphereGeometry(.028,10,8),fAccentMat);
+tailCap.scale.set(1,1,.55); tailCap.position.z=.175;
+flashGroup.add(tailCap);
+
+// ── Основной корпус ────────────────────────
+const bodyMesh=new THREE.Mesh(new THREE.CylinderGeometry(.026,.028,.28,16),fBodyMat);
+bodyMesh.rotation.x=Math.PI/2;
+flashGroup.add(bodyMesh);
+
+// ── Резиновая рукоятка (тёмная, матовая секция) ──
+const gripMesh=new THREE.Mesh(new THREE.CylinderGeometry(.030,.030,.10,16),fRubberMat);
+gripMesh.rotation.x=Math.PI/2; gripMesh.position.z=.07;
+flashGroup.add(gripMesh);
+
+// ── Рифление на рукоятке (6 тонких канавок) ──
+for(let i=0;i<6;i++){
+  const groove=new THREE.Mesh(new THREE.CylinderGeometry(.0305,.0305,.007,16),fAccentMat);
+  groove.rotation.x=Math.PI/2;
+  groove.position.z=.030+i*.014;
+  flashGroup.add(groove);
 }
 
-// Головка фонарика (расширяется к линзе)
-const flashHeadMat=new THREE.MeshStandardMaterial({color:0x141414,metalness:.9,roughness:.2});
-const flashHeadMesh=new THREE.Mesh(new THREE.CylinderGeometry(.040,.025,.065,14),flashHeadMat);
-flashHeadMesh.rotation.x=Math.PI/2;
-flashHeadMesh.position.z=-0.155;
-flashGroup.add(flashHeadMesh);
+// ── Переходное кольцо перед головкой ──────
+const collarMesh=new THREE.Mesh(new THREE.CylinderGeometry(.036,.028,.022,16),fBodyMat);
+collarMesh.rotation.x=Math.PI/2; collarMesh.position.z=-.108;
+flashGroup.add(collarMesh);
 
-// Ободок линзы
-const rimMat=new THREE.MeshStandardMaterial({color:0x3a3a3a,metalness:.95,roughness:.15});
-const rimMesh=new THREE.Mesh(new THREE.TorusGeometry(.038,.006,8,14),rimMat);
-rimMesh.position.z=-0.188;
-flashGroup.add(rimMesh);
+// ── Головка (конус, расширяется к линзе) ──
+const headMesh=new THREE.Mesh(new THREE.CylinderGeometry(.048,.036,.072,16),fBodyMat);
+headMesh.rotation.x=Math.PI/2; headMesh.position.z=-.160;
+flashGroup.add(headMesh);
 
-// Линза — светится всегда через MeshBasicMaterial (не зависит от освещения)
-// Яркость линзы меняется вместе с torch
-const lensMatOff=new THREE.MeshBasicMaterial({color:0x222222});
-const lensMatOn =new THREE.MeshBasicMaterial({color:0xfff5bb});
-const lensMesh=new THREE.Mesh(new THREE.CircleGeometry(.032,14),lensMatOff);
-lensMesh.position.z=-0.190;
+// ── Внутренний рефлектор (чашка) ──────────
+const reflMat=new THREE.MeshStandardMaterial({color:0xaaaaaa,metalness:1,roughness:.05,side:THREE.BackSide});
+const reflMesh=new THREE.Mesh(new THREE.CylinderGeometry(.046,.022,.06,16),reflMat);
+reflMesh.rotation.x=Math.PI/2; reflMesh.position.z=-.155;
+flashGroup.add(reflMesh);
+
+// ── Ободок линзы ──────────────────────────
+const rimMesh2=new THREE.Mesh(new THREE.TorusGeometry(.046,.005,8,16),fRimMat);
+rimMesh2.position.z=-.194;
+flashGroup.add(rimMesh2);
+
+// ── Линза (светится при включении) ────────
+const lensMatOff=new THREE.MeshBasicMaterial({color:0x1a1a22});
+const lensMatOn =new THREE.MeshBasicMaterial({color:0xfff8d0});
+const lensMesh=new THREE.Mesh(new THREE.CircleGeometry(.042,16),lensMatOff);
+lensMesh.position.z=-.196;
 flashGroup.add(lensMesh);
 
-// SpotLight теперь исходит из позиции линзы фонарика, а не из центра камеры
-torch.position.set(0.21, -0.26, -0.55);   // совпадает с кончиком линзы в пространстве камеры
-torchFill.position.set(0.18, -0.22, -0.45);
+// ── Внутреннее свечение линзы (halo при включении) ──
+const haloMatOff=new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0});
+const haloMatOn =new THREE.MeshBasicMaterial({color:0xffe88a,transparent:true,opacity:0.35});
+const haloMesh=new THREE.Mesh(new THREE.CircleGeometry(.038,16),haloMatOff);
+haloMesh.position.z=-.195;
+flashGroup.add(haloMesh);
 
-// Обновляем линзу при изменении torch.intensity (вызывается в двух местах — патчим через функцию)
+// ── Источник света строго по центру камеры ──
+// torch и torchFill прикреплены к camera; позиция (0,0,0) = глаза игрока
+torch.position.set(0,0,0);
+torchFill.position.set(0,-0.05,-0.2);
+
+// Обновляем линзу и halo при изменении состояния фонарика
 function applyTorchState(on){
-  torch.intensity   = on ? TORCH_MAX : 0;
+  torch.intensity     = on ? TORCH_MAX : 0;
   torchFill.intensity = on ? TORCH_MAX*0.18 : 0;
-  lensMesh.material = on ? lensMatOn : lensMatOff;
+  lensMesh.material   = on ? lensMatOn  : lensMatOff;
+  haloMesh.material   = on ? haloMatOn  : haloMatOff;
 }
 
 // Предметы крепятся к группе фонарика (рядом, слева от него)
@@ -2236,6 +2267,7 @@ function animate(){
     torch.intensity=TORCH_MAX*flick;
     torchFill.intensity=TORCH_MAX*0.18*flick;
     lensMesh.material=lensMatOn;
+    haloMesh.material=haloMatOn;
   }
   // Капающая вода
   for(const d of dripDrops){
