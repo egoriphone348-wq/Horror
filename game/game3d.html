@@ -552,50 +552,89 @@ scene.add(camera);
 const handsGroup=new THREE.Group();
 camera.add(handsGroup);
 
-const skinMat=new THREE.MeshLambertMaterial({color:0xf6cca3});
-const skinShadeMat=new THREE.MeshLambertMaterial({color:0xe9b98c});
-const sleeveMat=new THREE.MeshLambertMaterial({color:0x2a2e33});
+// Материалы рук — MeshStandardMaterial для корректного отображения при любом освещении
+const skinMat=new THREE.MeshStandardMaterial({color:0xd4956a,roughness:.85,metalness:0});
+const skinShadeMat=new THREE.MeshStandardMaterial({color:0xbc7d52,roughness:.9,metalness:0});
+const sleeveMat=new THREE.MeshStandardMaterial({color:0x1e2226,roughness:.9,metalness:.05});
+const knuckleMat=new THREE.MeshStandardMaterial({color:0xc4855a,roughness:.8,metalness:0});
 
-// Реалистичная мультяшная рука (как на референсе) — округлая ладонь + 5 пальцев на капсулах
+// Постоянный слабый свет для рук — прикреплён к камере, всегда виден независимо от фонарика
+const handFillLight=new THREE.PointLight(0xffd8b0, 0.55, 1.4, 2);
+handFillLight.position.set(0, -0.15, -0.35);
+camera.add(handFillLight);
+
+// Рука игрока: рукав + запястье + ладонь + 4 пальца + большой палец
 function makeArm(isLeft){
   const g=new THREE.Group();
-  const sleeve=new THREE.Mesh(new THREE.CylinderGeometry(.075,.085,.3,10),sleeveMat);
-  sleeve.rotation.x=Math.PI/2.1; sleeve.position.z=-.02; g.add(sleeve);
+  const sign=isLeft?-1:1;
+
+  // Рукав — цилиндр, уходящий назад (не виден игроку)
+  const sleeve=new THREE.Mesh(new THREE.CylinderGeometry(.072,.088,.38,12),sleeveMat);
+  sleeve.rotation.x=Math.PI/2; sleeve.position.z=.06; g.add(sleeve);
+
+  // Предплечье — переход к коже
+  const forearm=new THREE.Mesh(new THREE.CylinderGeometry(.058,.072,.14,10),skinMat);
+  forearm.rotation.x=Math.PI/2; forearm.position.z=-.10; g.add(forearm);
 
   const hand=new THREE.Group();
-  hand.position.set(0,-.02,.22);
+  hand.position.set(0, .0, .22);
   g.add(hand);
 
-  // Предплечье у запястья (переход от рукава к кисти)
-  const wrist=new THREE.Mesh(new THREE.CapsuleGeometry(.052,.1,4,8),skinMat);
-  wrist.rotation.x=Math.PI/2; wrist.position.z=-.06; hand.add(wrist);
+  // Запястье
+  const wrist=new THREE.Mesh(new THREE.SphereGeometry(.058,10,8),skinMat);
+  wrist.scale.set(1,.78,1.1); wrist.position.z=-.10; hand.add(wrist);
 
-  // Ладонь — приплюснутая округлая форма
-  const palm=new THREE.Mesh(new THREE.SphereGeometry(.075,12,10),skinMat);
-  palm.scale.set(1.05,.62,1.15);
+  // Ладонь — широкая приплюснутая форма
+  const palm=new THREE.Mesh(new THREE.SphereGeometry(.072,14,10),skinMat);
+  palm.scale.set(1.35,.65,1.3);
   hand.add(palm);
 
-  // Пальцы — гладкие капсулы, растопыренные веером (как эмодзи-ладонь)
-  const fingerDefs=[
-    {len:.1,  rad:.017, x:-.062, spread:-.34, tilt:-.08},
-    {len:.115,rad:.0185,x:-.021, spread:-.08, tilt:-.02},
-    {len:.12, rad:.0185,x:.021,  spread:.1,   tilt:0},
-    {len:.105,rad:.017, x:.056,  spread:.28,  tilt:.05},
-  ];
-  const sign=isLeft?-1:1;
-  for(const f of fingerDefs){
-    const finger=new THREE.Mesh(new THREE.CapsuleGeometry(f.rad,f.len,4,7),skinMat);
-    finger.position.set(f.x*1,.006,.075+f.len*.42);
-    finger.rotation.x=-Math.PI/2+f.tilt;
-    finger.rotation.z=f.spread*sign*-1;
-    hand.add(finger);
+  // Суставы костяшек поверх ладони
+  const knuckleXs=[-0.042,-0.014,0.014,0.042];
+  for(const kx of knuckleXs){
+    const k=new THREE.Mesh(new THREE.SphereGeometry(.013,6,5),knuckleMat);
+    k.position.set(kx,.028,.072); hand.add(k);
   }
-  // Большой палец — короче, отставлен в сторону
-  const thumb=new THREE.Mesh(new THREE.CapsuleGeometry(.02,.078,4,7),skinShadeMat);
-  thumb.position.set(sign*-.078,-.006,.028);
-  thumb.rotation.z=Math.PI/2;
-  thumb.rotation.y=sign*.55;
-  hand.add(thumb);
+
+  // 4 пальца
+  const fingerDefs=[
+    {len:.095, rad:.0165, x:-.044, spread:-.22, tilt:-.06, name:'index'},
+    {len:.110, rad:.018,  x:-.015, spread:-.06, tilt:-.02, name:'middle'},
+    {len:.105, rad:.0175, x:.015,  spread:.07,  tilt:0,    name:'ring'},
+    {len:.088, rad:.016,  x:.044,  spread:.22,  tilt:.06,  name:'pinky'},
+  ];
+  for(const f of fingerDefs){
+    // Основная фаланга
+    const f1=new THREE.Mesh(new THREE.CapsuleGeometry(f.rad,f.len*.45,4,8),skinMat);
+    f1.position.set(f.x, .008, .095+f.len*.18);
+    f1.rotation.x=-Math.PI/2+f.tilt;
+    f1.rotation.z=f.spread*sign*-1;
+    hand.add(f1);
+    // Средняя фаланга
+    const f2=new THREE.Mesh(new THREE.CapsuleGeometry(f.rad*.88,f.len*.38,4,7),skinShadeMat);
+    f2.position.set(f.x+f.spread*sign*-.01, .007, .095+f.len*.58);
+    f2.rotation.x=-Math.PI/2+f.tilt*.5;
+    f2.rotation.z=f.spread*sign*-1;
+    hand.add(f2);
+    // Ногтевая фаланга
+    const f3=new THREE.Mesh(new THREE.CapsuleGeometry(f.rad*.76,f.len*.28,4,6),skinShadeMat);
+    f3.position.set(f.x+f.spread*sign*-.02, .005, .095+f.len*.82);
+    f3.rotation.x=-Math.PI/2+f.tilt*.3;
+    f3.rotation.z=f.spread*sign*-1;
+    hand.add(f3);
+  }
+
+  // Большой палец — отставлен в сторону, 2 фаланги
+  const th1=new THREE.Mesh(new THREE.CapsuleGeometry(.022,.062,4,7),skinMat);
+  th1.position.set(sign*-.082,-.004,.020);
+  th1.rotation.z=sign*1.45;
+  th1.rotation.y=sign*.4;
+  hand.add(th1);
+  const th2=new THREE.Mesh(new THREE.CapsuleGeometry(.019,.050,4,6),skinShadeMat);
+  th2.position.set(sign*-.098,-.004,.060);
+  th2.rotation.z=sign*1.3;
+  th2.rotation.y=sign*.5;
+  hand.add(th2);
 
   g.userData.hand=hand;
   return g;
