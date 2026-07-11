@@ -1428,6 +1428,8 @@ const monsterFacing=new THREE.Vector2(0,1);
 let monsterStepTimer=0;
 let playerStepAccum=0;
 let lastScreamerCheck=0;
+let chaseFlickerTimer=0;    // секунды паники ламп при начале погони
+let falseScareCooldown=0;   // кулдаун между ложными скримерами (секунды)
 
 function activateEntity(){
   const cands=Object.keys(ROOMS).filter(r=>!SAFE_ROOMS.has(r)&&r!==gs.room);
@@ -1494,6 +1496,7 @@ function startChase(){
   loseSightTimer=0;
   teleportCooldown=3+Math.random()*2;
   chaseScreamCooldown=0;
+  chaseFlickerTimer=5.5;   // лампы паникуют 5.5 сек
   msg('😱 ОН ТЕБЯ УВИДЕЛ! БЕГИ!',3000);
 }
 
@@ -1615,6 +1618,31 @@ function updateEntity(dt){
   const pdist=Math.sqrt(pdx*pdx+pdz*pdz);
   if(pdist<1.9){ encounter(); return; }
   if(pdist<7 && Math.random()<0.012) msg(NEAR_MSGS[Math.floor(Math.random()*NEAR_MSGS.length)],3000);
+  // Ложный скример: монстр далеко, фонарик выключен, тёмная комната → внезапный удар
+  if(pdist>12 && !gs.flashOn && Math.random()<0.0018) triggerFalseScare();
+}
+
+// ═══════════════════════════════════════════
+//  ЛОЖНЫЙ СКРИМЕР — удар без монстра
+//  Срабатывает когда игрок расслаблен в темноте
+// ═══════════════════════════════════════════
+function triggerFalseScare(){
+  if(falseScareCooldown>0||jumpscareActive||!gs.entityActive) return;
+  falseScareCooldown=45+Math.random()*35;
+  playBang();
+  triggerCameraShake(1.0,0.5);
+  // Вспышка + мгновенное гашение света
+  const red=document.getElementById('red-flash');
+  red.style.transition='opacity .04s';
+  red.style.opacity='0.5';
+  setTimeout(()=>{ red.style.transition='opacity .4s'; red.style.opacity='0'; },90);
+  const savedI=roomPL.intensity;
+  roomPL.intensity=0;
+  for(const pl of staticLights) pl.intensity=0;
+  setTimeout(()=>{
+    roomPL.intensity=savedI;
+    // staticLights восстановятся сами в следующем кадре анимации
+  },220);
 }
 
 // ═══════════════════════════════════════════
@@ -1631,7 +1659,9 @@ function encounter(){
   const drain=20+gs.entityEncounters*5;
   gs.sanity=Math.max(0,gs.sanity-drain);
   unlockPointer();
-  playScare();
+  // Тихий скрип-предвестник → пауза → ГЛАВНЫЙ УДАР точно в момент когда монстр достигает лица
+  playPreScare();
+  setTimeout(()=>playScare(), FLY_DUR-55);
   triggerCameraShake(1.6,(FLY_DUR+HOLD_DUR)/1000);
   monsterStartPos.copy(monsterPos);
   jumpscarePhase='fly';
@@ -1907,6 +1937,45 @@ function screamStop(){
     if(ruVoice) u.voice=ruVoice;
     speechSynthesis.speak(u);
   }catch(e){}
+}
+
+// Тихий скрип/выдох — за долю секунды до главного удара (нагнетает ужас)
+function playPreScare(){
+  if(!audioCtx) return;
+  const t0=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator();
+  osc.type='sawtooth';
+  osc.frequency.setValueAtTime(380,t0);
+  osc.frequency.exponentialRampToValueAtTime(90,t0+0.27);
+  const filt=audioCtx.createBiquadFilter();
+  filt.type='bandpass'; filt.frequency.value=550; filt.Q.value=2.2;
+  const g=audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(0.20,t0+0.07);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.30);
+  osc.connect(filt); filt.connect(g); g.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0+0.32);
+}
+
+// Резкий удар/хлопок — для ложных скримеров
+function playBang(){
+  if(!audioCtx) return;
+  const t0=audioCtx.currentTime;
+  const buf=audioCtx.createBuffer(1,Math.floor(audioCtx.sampleRate*0.25),audioCtx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/d.length*9);
+  const src=audioCtx.createBufferSource(); src.buffer=buf;
+  const g=audioCtx.createGain(); g.gain.value=0.88;
+  src.connect(g); g.connect(audioCtx.destination); src.start(t0);
+  const osc=audioCtx.createOscillator();
+  osc.type='sawtooth';
+  osc.frequency.setValueAtTime(2400,t0);
+  osc.frequency.exponentialRampToValueAtTime(170,t0+0.18);
+  const og=audioCtx.createGain();
+  og.gain.setValueAtTime(0.48,t0);
+  og.gain.exponentialRampToValueAtTime(0.0001,t0+0.21);
+  osc.connect(og); og.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0+0.23);
 }
 
 // Короткий пронзительный визг/скрежет (используется при телепортации монстра)
@@ -2244,6 +2313,7 @@ function animate(){
     updateInteract();
     updateJumpscare(dt);
     updateRevive(dt);
+    if(falseScareCooldown>0) falseScareCooldown-=dt;
   }
   // Анимация предметов
   for(const e of itemMeshes){
@@ -2260,6 +2330,17 @@ function animate(){
     } else {
       pl.intensity=pl.userData.base*(0.82+0.18*Math.sin(t*7+pl.userData.phase));
     }
+  }
+  // Паника ламп при начале погони — агрессивное мерцание нарастает, потом спадает
+  if(chaseFlickerTimer>0){
+    chaseFlickerTimer=Math.max(0,chaseFlickerTimer-dt);
+    const panicT=Math.min(1, chaseFlickerTimer>4 ? (5.5-chaseFlickerTimer)/1.5 : chaseFlickerTimer/3.5);
+    const killChance=0.45*panicT;
+    for(const pl of staticLights){
+      if(Math.random()<killChance) pl.intensity=0;
+      else pl.intensity=pl.userData.base*(0.2+Math.random()*0.8)*panicT+pl.userData.base*(1-panicT);
+    }
+    if(Math.random()<killChance*0.6) roomPL.intensity=0;
   }
   // Динамическое мерцание фонарика
   if(gs.flashOn){
