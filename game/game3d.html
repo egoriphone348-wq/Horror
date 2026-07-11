@@ -570,61 +570,61 @@ const fRimMat   =new THREE.MeshStandardMaterial({color:0x4a4a4a,metalness:.95,ro
 const fRubberMat=new THREE.MeshStandardMaterial({color:0x181818,metalness:.05,roughness:.95});
 
 // ── Хвостовая заглушка ─────────────────────
-const tailCap=new THREE.Mesh(new THREE.SphereGeometry(.028,10,8),fAccentMat);
-tailCap.scale.set(1,1,.55); tailCap.position.z=.175;
+const tailCap=new THREE.Mesh(new THREE.SphereGeometry(.042,10,8),fAccentMat);
+tailCap.scale.set(1,1,.55); tailCap.position.z=.105;
 flashGroup.add(tailCap);
 
-// ── Основной корпус ────────────────────────
-const bodyMesh=new THREE.Mesh(new THREE.CylinderGeometry(.026,.028,.28,16),fBodyMat);
+// ── Основной корпус (короче, жирнее) ──────
+const bodyMesh=new THREE.Mesh(new THREE.CylinderGeometry(.039,.042,.17,16),fBodyMat);
 bodyMesh.rotation.x=Math.PI/2;
 flashGroup.add(bodyMesh);
 
-// ── Резиновая рукоятка (тёмная, матовая секция) ──
-const gripMesh=new THREE.Mesh(new THREE.CylinderGeometry(.030,.030,.10,16),fRubberMat);
-gripMesh.rotation.x=Math.PI/2; gripMesh.position.z=.07;
+// ── Резиновая рукоятка ─────────────────────
+const gripMesh=new THREE.Mesh(new THREE.CylinderGeometry(.046,.046,.06,16),fRubberMat);
+gripMesh.rotation.x=Math.PI/2; gripMesh.position.z=.042;
 flashGroup.add(gripMesh);
 
-// ── Рифление на рукоятке (6 тонких канавок) ──
-for(let i=0;i<6;i++){
-  const groove=new THREE.Mesh(new THREE.CylinderGeometry(.0305,.0305,.007,16),fAccentMat);
+// ── Рифление на рукоятке (4 канавки) ──────
+for(let i=0;i<4;i++){
+  const groove=new THREE.Mesh(new THREE.CylinderGeometry(.047,.047,.008,16),fAccentMat);
   groove.rotation.x=Math.PI/2;
-  groove.position.z=.030+i*.014;
+  groove.position.z=.018+i*.014;
   flashGroup.add(groove);
 }
 
-// ── Переходное кольцо перед головкой ──────
-const collarMesh=new THREE.Mesh(new THREE.CylinderGeometry(.036,.028,.022,16),fBodyMat);
-collarMesh.rotation.x=Math.PI/2; collarMesh.position.z=-.108;
+// ── Переходное кольцо ──────────────────────
+const collarMesh=new THREE.Mesh(new THREE.CylinderGeometry(.054,.042,.014,16),fBodyMat);
+collarMesh.rotation.x=Math.PI/2; collarMesh.position.z=-.065;
 flashGroup.add(collarMesh);
 
-// ── Головка (конус, расширяется к линзе) ──
-const headMesh=new THREE.Mesh(new THREE.CylinderGeometry(.048,.036,.072,16),fBodyMat);
-headMesh.rotation.x=Math.PI/2; headMesh.position.z=-.160;
+// ── Головка (широкий короткий конус) ──────
+const headMesh=new THREE.Mesh(new THREE.CylinderGeometry(.072,.054,.044,16),fBodyMat);
+headMesh.rotation.x=Math.PI/2; headMesh.position.z=-.096;
 flashGroup.add(headMesh);
 
-// ── Внутренний рефлектор (чашка) ──────────
+// ── Внутренний рефлектор ───────────────────
 const reflMat=new THREE.MeshStandardMaterial({color:0xaaaaaa,metalness:1,roughness:.05,side:THREE.BackSide});
-const reflMesh=new THREE.Mesh(new THREE.CylinderGeometry(.046,.022,.06,16),reflMat);
-reflMesh.rotation.x=Math.PI/2; reflMesh.position.z=-.155;
+const reflMesh=new THREE.Mesh(new THREE.CylinderGeometry(.069,.033,.036,16),reflMat);
+reflMesh.rotation.x=Math.PI/2; reflMesh.position.z=-.093;
 flashGroup.add(reflMesh);
 
 // ── Ободок линзы ──────────────────────────
-const rimMesh2=new THREE.Mesh(new THREE.TorusGeometry(.046,.005,8,16),fRimMat);
-rimMesh2.position.z=-.194;
+const rimMesh2=new THREE.Mesh(new THREE.TorusGeometry(.070,.007,8,16),fRimMat);
+rimMesh2.position.z=-.117;
 flashGroup.add(rimMesh2);
 
 // ── Линза (светится при включении) ────────
 const lensMatOff=new THREE.MeshBasicMaterial({color:0x1a1a22});
 const lensMatOn =new THREE.MeshBasicMaterial({color:0xfff8d0});
-const lensMesh=new THREE.Mesh(new THREE.CircleGeometry(.042,16),lensMatOff);
-lensMesh.position.z=-.196;
+const lensMesh=new THREE.Mesh(new THREE.CircleGeometry(.063,16),lensMatOff);
+lensMesh.position.z=-.119;
 flashGroup.add(lensMesh);
 
 // ── Внутреннее свечение линзы (halo при включении) ──
 const haloMatOff=new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0});
 const haloMatOn =new THREE.MeshBasicMaterial({color:0xffe88a,transparent:true,opacity:0.35});
-const haloMesh=new THREE.Mesh(new THREE.CircleGeometry(.038,16),haloMatOff);
-haloMesh.position.z=-.195;
+const haloMesh=new THREE.Mesh(new THREE.CircleGeometry(.057,16),haloMatOff);
+haloMesh.position.z=-.118;
 flashGroup.add(haloMesh);
 
 // ── Источник света строго по центру камеры ──
